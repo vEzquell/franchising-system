@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
@@ -10,8 +9,18 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
-#[Fillable(['name', 'email', 'password'])]
-#[Hidden(['password', 'remember_token'])]
+#[Fillable([
+    'name',
+    'username',
+    'password',
+    'role',
+    'status',
+])]
+#[Hidden([
+    'password',
+    'remember_token',
+])]
+
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
@@ -25,8 +34,40 @@ class User extends Authenticatable
     protected function casts(): array
     {
         return [
-            'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'last_login_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Check if the user is a Super Administrator.
+     */
+    public function isSuperAdmin(): bool
+    {
+        return $this->role === 'superadmin';
+    }
+
+    /**
+     * Check if the user is an Administrator.
+     */
+    public function isAdmin(): bool
+    {
+        return $this->role === 'admin';
+    }
+
+    /**
+     * Check if the user is an Evaluator.
+     */
+    public function isEvaluator(): bool
+    {
+        return $this->role === 'evaluator';
+    }
+
+    /**
+     * Check if the user has an active account.
+     */
+    public function isActive(): bool
+    {
+        return $this->status === 'active';
     }
 }
