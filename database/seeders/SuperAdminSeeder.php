@@ -4,9 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\User;
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Password;
-use Illuminate\Support\Str;
+use Spatie\Permission\Models\Role;
 
 class SuperAdminSeeder extends Seeder
 {
@@ -20,14 +18,23 @@ class SuperAdminSeeder extends Seeder
             );
         }
 
-        User::updateOrCreate(
+        // Ensure Superadmin role exists
+        Role::firstOrCreate([
+            'name' => 'superadmin',
+            'guard_name' => 'web',
+        ]);
+
+        // Create or update Superadmin
+        $user = User::updateOrCreate(
             ['username' => 'adminvon'],
             [
                 'name' => 'System Administrator',
-                'password' => Hash::make($password),
-                'role' => 'superadmin',
+                'password' => $password,
                 'status' => 'active',
             ]
         );
+
+        // Assign Superadmin role
+        $user->syncRoles(['superadmin']);
     }
 }

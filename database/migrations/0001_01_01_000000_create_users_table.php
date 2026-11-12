@@ -1,4 +1,3 @@
-
 <?php
 
 use Illuminate\Database\Migrations\Migration;
@@ -17,14 +16,7 @@ return new class extends Migration
             $table->string('username', 50)->unique();
             $table->string('password');
 
-            // Role and Account Status
-            $table->enum('role', [
-                'superadmin',
-                'admin',
-                'evaluator',
-                'user'
-            ])->default('user');
-
+            // Account Status
             $table->enum('status', [
                 'active',
                 'inactive'
@@ -36,11 +28,10 @@ return new class extends Migration
             // Authentication
             $table->rememberToken();
 
-            // Created and Updated Dates
+            // Timestamps
             $table->timestamps();
         });
 
-        // Sessions
         Schema::create('sessions', function (Blueprint $table) {
             $table->string('id')->primary();
 
