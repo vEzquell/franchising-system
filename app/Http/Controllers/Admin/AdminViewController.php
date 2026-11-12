@@ -12,4 +12,6 @@ class AdminViewController extends Controller
     {
         return Inertia::render('Admin/Dashboard');
     }
+
+    
 }

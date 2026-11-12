@@ -27,33 +27,34 @@ const emit = defineEmits(['close'])
 const page = usePage()
 
 // Navigation Menus
-const menus = [
+const menus = computed(() => [
     {
         name: 'Dashboard',
-        href: '/dashboard',
+        href: page.props.navigation.dashboard,
         icon: LayoutDashboard
     },
     {
         name: 'Franchises',
-        href: '/franchises',
+        href: page.props.navigation['franchises.index'],
         icon: FileText
     },
     {
         name: 'User Management',
-        href: '/users',
+        href: page.props.navigation.users,
         icon: Users
     },
     {
         name: 'Settings',
-        href: '/settings',
+        href: page.props.navigation.settings,
         icon: Settings
     }
-]
+].filter(menu => menu.href))
 
 // Check Active Route
 const isActive = (href) => {
-    return page.url === href ||
-        (href !== '/dashboard' && page.url.startsWith(href + '/'))
+    const path = page.url.split(/[?#]/)[0]
+    return path === href ||
+        (href !== page.props.navigation.dashboard && path.startsWith(href + '/'))
 }
 
 // Current User
@@ -106,7 +107,7 @@ const closeSidebar = () => {
             <div class="flex items-center gap-3 min-w-0">
                 <div class="w-10 h-10 bg-white rounded-xl p-1 flex items-center justify-center shrink-0 shadow-sm">
                     <img
-                        :src="`${$url('/assets/sc_logo.png')}`"
+                        :src="'/assets/sc_logo.png'"
                         alt="City Seal"
                         class="w-full h-full object-contain"
                     />
@@ -193,7 +194,7 @@ const closeSidebar = () => {
         <div class="shrink-0 border-t border-white/10 px-3 pt-4 pb-5 space-y-3">
             <!-- Logout -->
             <Link
-                href="/logout"
+                :href="page.props.navigation.logout"
                 method="post"
                 as="button"
                 class="
