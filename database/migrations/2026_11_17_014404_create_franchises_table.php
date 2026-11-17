@@ -13,6 +13,18 @@ return new class extends Migration
     {
         Schema::create('franchises', function (Blueprint $table) {
             $table->id();
+
+            $table->string('franchise_number', 50)->unique();
+
+            $table->enum('status', [
+                'active',
+                'expired',
+                'suspended',
+                'unavailable',
+            ])->default('active');
+
+            $table->date('date_issued')->nullable();
+            $table->date('expiration_date')->nullable();
             $table->timestamps();
         });
     }
