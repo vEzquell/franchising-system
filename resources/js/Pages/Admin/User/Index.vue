@@ -1,8 +1,11 @@
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, inject, onBeforeUnmount, onMounted, watch } from 'vue'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { Link } from '@inertiajs/vue3'
+import { Head } from '@inertiajs/vue3'
+import http from '@/lib/http'
+import CreateUser from './Create.vue'
+import EditUser from './Edit.vue'
 import {
     Plus,
     Search,
@@ -15,6 +18,8 @@ import {
 
 // Props from Laravel UserController
 const props = defineProps({
+    roles: { type: Array, default: () => [] },
+    filters: { type: Object, default: () => ({ search: '' }) },
     users: {
         type: Object,
         default: () => ({
@@ -29,31 +34,65 @@ const props = defineProps({
 })
 
 // Search
-const search = ref('')
+const route = inject('route')
+const search = ref(props.filters.search)
+const users = ref(props.users)
+const createOpen = ref(false)
+const editOpen = ref(false)
+const selectedUser = ref(null)
+const notice = ref('')
+const loadError = ref('')
+const loading = ref(false)
+let searchTimer
+let listRequest
 
-// Filter users on the current page
-const filteredUsers = computed(() => {
-    const keyword = search.value.toLowerCase().trim()
-
-    if (!keyword) return props.users.data
-
-    return props.users.data.filter(user => {
-        const roles = (user.roles ?? [])
-            .map(role => role.name)
-            .join(' ')
-
-        return [
-            user.name,
-            user.username,
-            user.status,
-            roles
-        ].some(value =>
-            String(value ?? '')
-                .toLowerCase()
-                .includes(keyword)
-        )
-    })
+onMounted(() => {
+    if (new URLSearchParams(window.location.search).get('create') === '1') createOpen.value = true
 })
+watch(() => props.users, (value) => { users.value = value })
+watch(() => props.filters.search, (value) => { if (search.value !== value) search.value = value })
+watch(search, () => {
+    clearTimeout(searchTimer)
+    listRequest?.abort()
+    searchTimer = setTimeout(() => loadUsers(), 300)
+})
+onBeforeUnmount(() => { clearTimeout(searchTimer); listRequest?.abort() })
+
+async function loadUsers(page = 1) {
+    clearTimeout(searchTimer)
+    listRequest?.abort()
+    const request = new AbortController()
+    listRequest = request
+    loading.value = true
+    loadError.value = ''
+    try {
+        const { data } = await http.get(route('users'), { params: { search: search.value, page }, signal: request.signal })
+        if (!request.signal.aborted) users.value = data.users
+    } catch (error) {
+        if (!request.signal.aborted) loadError.value = 'Unable to load users. Please try again.'
+    } finally {
+        if (listRequest === request) loading.value = false
+    }
+}
+
+function userCreated() {
+    notice.value = 'User created successfully.'
+    if (search.value) search.value = ''
+    else loadUsers()
+}
+
+function editUser(user) {
+    selectedUser.value = user
+    editOpen.value = true
+}
+
+function userUpdated() {
+    notice.value = 'User updated successfully.'
+    loadUsers(users.value.current_page)
+}
+
+// Results from the server, including search across all pages
+const filteredUsers = computed(() => users.value.data)
 
 // Display role
 const getRole = (user) => {
@@ -77,18 +116,16 @@ const roleClass = (user) => {
     }
 }
 
-// Pagination link
-const pageUrl = (page) => {
-    const url = new URL(window.location.href)
-    url.searchParams.set('page', page)
-    return url.pathname + url.search
-}
 </script>
 
 <template>
     <!-- Main Container -->
+    <Head title="User Management" />
     <AuthenticatedLayout>
         <div class="min-h-full bg-[#E3F2FD]/30 p-4 md:p-6">
+            <p v-if="notice" role="status" class="mb-4 rounded-lg bg-green-50 p-3 text-sm text-green-800">{{ notice }}</p>
+            <p v-if="loadError" role="alert" class="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{{ loadError }} <button type="button" class="underline" @click="loadUsers(users.current_page)">Retry</button></p>
+            <p v-if="loading" role="status" class="mb-3 text-sm text-gray-500">Loading users...</p>
 
             <div class="overflow-hidden rounded-xl border border-[#90CAF9]/50 bg-white shadow-sm">
 
@@ -121,6 +158,8 @@ const pageUrl = (page) => {
 
                             <input
                                 v-model="search"
+                                aria-label="Search users"
+                                maxlength="255"
                                 type="text"
                                 placeholder="Search users..."
                                 class="w-full rounded-lg border border-[#90CAF9] bg-white py-2.5 pl-10 pr-4 text-sm text-gray-700 outline-none transition focus:border-[#2196F3] focus:ring-2 focus:ring-[#90CAF9]/30 sm:w-64"
@@ -128,18 +167,20 @@ const pageUrl = (page) => {
                         </div>
 
                         <!-- Add User -->
-                        <Link
-                            href="/users/create"
+                        <button
+                            
+                            type="button"
+                            @click="createOpen = true"
                             class="inline-flex items-center justify-center gap-2 rounded-lg bg-[#2196F3] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0D47A1]"
                         >
                             <Plus class="h-4 w-4" />
                             Add User
-                        </Link>
+                        </button>
                     </div>
                 </div>
 
                 <!-- Body -->
-                <div class="overflow-x-auto">
+                <div class="overflow-x-auto" :aria-busy="loading">
                     <table class="w-full min-w-[750px] text-left text-sm">
 
                         <!-- Table Header -->
@@ -247,13 +288,16 @@ const pageUrl = (page) => {
                                 <!-- Actions -->
                                 <td class="px-5 py-4">
                                     <div class="flex justify-center">
-                                        <Link
-                                            :href="`/users/${user.id}/edit`"
+                                        <button
+                                            
+                                            type="button"
+                                            :aria-label="`Edit ${user.name}`"
+                                            @click="editUser(user)"
                                             class="inline-flex items-center gap-1.5 rounded-lg bg-[#E3F2FD] px-3 py-2 text-xs font-semibold text-[#0D47A1] transition hover:bg-[#90CAF9]"
                                         >
                                             <Pencil class="h-3.5 w-3.5" />
                                             Edit
-                                        </Link>
+                                        </button>
                                     </div>
                                 </td>
                             </tr>
@@ -304,14 +348,16 @@ const pageUrl = (page) => {
                     <div class="flex items-center gap-2">
 
                         <!-- Previous -->
-                        <Link
+                        <button
                             v-if="users.current_page > 1"
-                            :href="pageUrl(users.current_page - 1)"
-                            preserve-scroll
+                            type="button"
+                            :disabled="loading"
+                            aria-label="Previous page"
+                            @click="loadUsers(users.current_page - 1)"
                             class="rounded-lg border border-[#90CAF9] p-2 text-[#0D47A1] transition hover:bg-[#E3F2FD]"
                         >
                             <ChevronLeft class="h-4 w-4" />
-                        </Link>
+                        </button>
 
                         <span
                             v-else
@@ -330,14 +376,16 @@ const pageUrl = (page) => {
                         </span>
 
                         <!-- Next -->
-                        <Link
+                        <button
                             v-if="users.current_page < users.last_page"
-                            :href="pageUrl(users.current_page + 1)"
-                            preserve-scroll
+                            type="button"
+                            :disabled="loading"
+                            aria-label="Next page"
+                            @click="loadUsers(users.current_page + 1)"
                             class="rounded-lg border border-[#90CAF9] p-2 text-[#0D47A1] transition hover:bg-[#E3F2FD]"
                         >
                             <ChevronRight class="h-4 w-4" />
-                        </Link>
+                        </button>
 
                         <span
                             v-else
@@ -349,5 +397,7 @@ const pageUrl = (page) => {
                 </div>
             </div>
         </div>
+        <CreateUser  v-model:open="createOpen" :roles="roles" @created="userCreated" />
+        <EditUser  v-model:open="editOpen" :user="selectedUser" :roles="roles" @updated="userUpdated" />
     </AuthenticatedLayout>
 </template>

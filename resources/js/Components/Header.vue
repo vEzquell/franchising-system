@@ -1,10 +1,11 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Link, usePage } from '@inertiajs/vue3'
 import { ChevronDown, LogOut, Menu, Settings, ShieldCheck } from 'lucide-vue-next'
 
 defineEmits(['toggle-sidebar'])
 const page = usePage()
+const route = inject('route')
 const dropdownOpen = ref(false)
 const account = ref(null)
 const trigger = ref(null)
@@ -73,14 +74,14 @@ onBeforeUnmount(() => {
                             <p v-if="user?.username" class="mt-0.5 truncate text-xs text-blue-500">@{{ user.username }}</p>
                         </div>
                         <div class="space-y-1 p-2">
-                            <Link v-if="page.props.navigation?.settings" :href="page.props.navigation.settings" class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-[#0D47A1] hover:bg-[#E3F2FD]" @click="dropdownOpen = false">
+                            <Link v-if="route().has('settings')" :href="route('settings', undefined, false)" class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-[#0D47A1] hover:bg-[#E3F2FD]" @click="dropdownOpen = false">
                                 <Settings class="h-4 w-4 text-[#2196F3]" /> Settings
                             </Link>
                             <div v-else class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-400" aria-disabled="true">
                                 <Settings class="h-4 w-4" /> Settings
                                 <span class="ml-auto rounded-md bg-blue-50 px-2 py-1 text-[10px] font-medium text-blue-400">Coming soon</span>
                             </div>
-                            <Link v-if="page.props.navigation?.logout" :href="page.props.navigation.logout" method="post" as="button" class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50" @click="dropdownOpen = false">
+                            <Link v-if="route().has('logout')" :href="route('logout', undefined, false)" method="post" as="button" class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50" @click="dropdownOpen = false">
                                 <LogOut class="h-4 w-4" /> Sign out
                             </Link>
                         </div>

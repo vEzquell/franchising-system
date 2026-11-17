@@ -3,8 +3,8 @@
 namespace App\Http\Middleware;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Route;
 use Inertia\Middleware;
+use Tighten\Ziggy\Ziggy;
 
 class HandleInertiaRequests extends Middleware
 {
@@ -36,19 +36,28 @@ class HandleInertiaRequests extends Middleware
      */
     public function share(Request $request): array
     {
+        $user = $request->user();
+
         return [
             ...parent::share($request),
+
+            'ziggy' => fn () => (new Ziggy)->toArray(),
+
             'auth' => [
-                'user' => fn () => $request->user()?->only('id', 'name', 'username'),
-            ],
-            'navigation' => [
-                'dashboard' => route('dashboard', absolute: false),
-                'users' => route('users', absolute: false),
-                'logout' => route('logout', absolute: false),
-                'franchises.index' => Route::has('franchises.index')
-                    ? route('franchises.index', absolute: false) : null,
-                'settings' => Route::has('settings')
-                    ? route('settings', absolute: false) : null,
+                'user' => $user?->only([
+                    'id',
+                    'name',
+                    'username',
+                ]),
+                'roles' => fn () => $user
+                    ? $user->getRoleNames()->values() : [],
+                'permissions' => fn () => $user
+                    ? $user->getAllPermissions()
+                        ->pluck('name')
+                        ->values()
+                        ->all() : [],
+                'isSuperAdmin' => fn () => $user
+                    ? $user->hasRole('superadmin') : false,
             ],
         ];
     }
