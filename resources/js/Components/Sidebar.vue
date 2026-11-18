@@ -64,9 +64,27 @@ const menus = computed(() => [
     },
     {
         name: 'Franchises',
-        routeName: 'franchises.index',
+        routeName: 'franchise.index',
         icon: FileText,
-        permission: 'view franchises',
+        permission: 'view franchise',
+    },
+    {
+        name: 'Transactions',
+        routeName: 'transactions.index',
+        icon: FileText,
+        permission: 'view transactions',
+    },
+    {
+        name: 'Ownership',
+        routeName: 'ownerships.index',
+        icon: FileText,
+        permission: 'view ownerships',
+    },
+    {
+        name: 'Owners',
+        routeName: 'owners.index',
+        icon: Users,
+        permission: 'view owners',
     },
     {
         name: 'User Management',

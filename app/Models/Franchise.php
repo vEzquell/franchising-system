@@ -42,4 +42,9 @@ class Franchise extends Model
     {
         return $this->hasMany(FranchiseTransaction::class, 'franchise_id');
     }
+
+    public function vehicleAssignments(): HasMany
+    {
+        return $this->hasMany(FranchiseVehicleAssignment::class, 'franchise_id');
+    }
 }

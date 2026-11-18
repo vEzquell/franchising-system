@@ -23,4 +23,9 @@ class Vehicle extends Model
     {
         return $this->hasMany(FranchiseSubstitution::class, 'new_vehicle_id');
     }
+
+    public function vehicleAssignments(): HasMany
+    {
+        return $this->hasMany(FranchiseVehicleAssignment::class, 'vehicle_id');
+    }
 }

@@ -1,0 +1,65 @@
+<?php
+
+namespace App\Http\Controllers\Admin;
+
+use App\Http\Controllers\Controller;
+use App\Http\Requests\SaveOwnerRequest;
+use App\Models\Franchise;
+use App\Models\FranchiseOwner;
+use App\Services\Admin\OwnerService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Inertia\Inertia;
+use Inertia\Response;
+
+class OwnerController extends Controller
+{
+    public function __construct(private readonly OwnerService $ownerService) {}
+
+    public function index(Request $request): Response|JsonResponse
+    {
+        $filters = $request->validate(['search' => ['nullable', 'string', 'max:255'], 'page' => ['sometimes', 'integer', 'min:1']]);
+        $search = trim($filters['search'] ?? '');
+        $data = ['owners' => $this->ownerService->paginate($search), 'filters' => ['search' => $search]];
+
+        return $request->wantsJson() ? response()->json($data) : Inertia::render('Admin/Owner/Index', $data);
+    }
+
+    public function franchises(Request $request): JsonResponse
+    {
+        $filters = $request->validate(['search' => ['nullable', 'string', 'max:50']]);
+        $search = trim($filters['search'] ?? '');
+
+        return response()->json(['franchises' => Franchise::query()->where('franchise_number', 'like', '%'.$search.'%')
+            ->orderBy('franchise_number')->limit(20)->get(['id', 'franchise_number', 'expiration_date'])]);
+    }
+
+    public function assignFranchise(Request $request, FranchiseOwner $owner): JsonResponse
+    {
+        $data = $request->validate([
+            'franchise_id' => ['required', 'integer', 'exists:franchises,id'],
+            'started_at' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
+            'expiration_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:started_at'],
+        ]);
+        $this->ownerService->assignFranchise($owner, $data);
+
+        return response()->json(['message' => 'Franchise assigned.'], 201);
+    }
+
+    public function store(SaveOwnerRequest $request): JsonResponse
+    {
+        $owner = $this->ownerService->create($request->validated());
+
+        return response()->json([
+            'message' => 'Owner created.',
+            'owner' => $owner->only(['id', 'first_name', 'middle_name', 'last_name', 'suffix']),
+        ], 201);
+    }
+
+    public function update(SaveOwnerRequest $request, FranchiseOwner $owner): JsonResponse
+    {
+        $this->ownerService->update($owner, $request->validated());
+
+        return response()->json(['message' => 'Owner updated.']);
+    }
+}

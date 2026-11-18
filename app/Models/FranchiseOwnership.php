@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class FranchiseOwnership extends Model
 {
@@ -30,5 +31,10 @@ class FranchiseOwnership extends Model
     public function owner(): BelongsTo
     {
         return $this->belongsTo(FranchiseOwner::class, 'franchise_owner_id');
+    }
+
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(Attachment::class);
     }
 }

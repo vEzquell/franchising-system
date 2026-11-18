@@ -16,7 +16,6 @@ class PermissionController extends Controller
 {
     public function index(Request $request): Response|JsonResponse
     {
-        // Check authorization
         abort_unless(
 
             $request->user()->can('view permissions'),
