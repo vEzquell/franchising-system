@@ -51,24 +51,27 @@ function Wait-ScannerOperation($Operation, [Type]$ResultType, [Type]$ProgressTyp
         if ($null -ne $cancellation) { $cancellation.Dispose() }
     }
 }
-function Get-NativeScanners {
+function Get-NativeScanners([hashtable]$TwainSources = @{}) {
     $selector = [Windows.Devices.Scanners.ImageScanner]::GetDeviceSelector()
     $devices = Wait-ScannerOperation ([Windows.Devices.Enumeration.DeviceInformation]::FindAllAsync($selector)) ([Windows.Devices.Enumeration.DeviceInformationCollection]) -TimeoutMs 5000
     $scanSources = [Windows.Devices.Scanners.ImageScannerScanSource]
     foreach ($device in $devices) {
-        $sources = @('flatbed')
-        try {
-            if (!(Test-NativeScannerOperationPending)) {
-                $scanner = Wait-ScannerOperation ([Windows.Devices.Scanners.ImageScanner]::FromIdAsync($device.Id)) ([Windows.Devices.Scanners.ImageScanner]) -TimeoutMs 2000 -UsesScanner
-                if ($null -ne $scanner) {
-                    $sources = @(
-                        if ($scanner.IsScanSourceSupported($scanSources::Flatbed)) { 'flatbed' }
-                        if ($scanner.IsScanSourceSupported($scanSources::Feeder)) { 'feeder' }
-                    )
+        $sources = $TwainSources[[string]$device.Name]
+        if ($null -eq $sources) {
+            $sources = @('flatbed')
+            try {
+                if (!(Test-NativeScannerOperationPending)) {
+                    $scanner = Wait-ScannerOperation ([Windows.Devices.Scanners.ImageScanner]::FromIdAsync($device.Id)) ([Windows.Devices.Scanners.ImageScanner]) -TimeoutMs 2000 -UsesScanner
+                    if ($null -ne $scanner) {
+                        $sources = @(
+                            if ($scanner.IsScanSourceSupported($scanSources::Flatbed)) { 'flatbed' }
+                            if ($scanner.IsScanSourceSupported($scanSources::Feeder)) { 'feeder' }
+                        )
+                    }
                 }
+            } catch {
+                Write-Warning "Could not check scan sources for $($device.Name): $($_.Exception.Message)"
             }
-        } catch {
-            Write-Warning "Could not check scan sources for $($device.Name): $($_.Exception.Message)"
         }
         @{ id = 'winrt:' + $device.Id; name = $device.Name; backend = 'windows-native'; sources = $sources }
     }

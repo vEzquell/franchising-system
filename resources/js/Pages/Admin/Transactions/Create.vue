@@ -2,6 +2,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { usePage } from '@inertiajs/vue3'
 import { X } from 'lucide-vue-next'
+import { formatOwnerName } from '@/lib/formatOwnerName'
 import http from '@/lib/http'
 import Field from './Field.vue'
 import VehicleForm from './VehicleForm.vue'
@@ -14,7 +15,7 @@ import Application from './Application.vue'
 import OwnerForm from '../Owner/Create.vue'
 
 const open = defineModel('open', { type: Boolean, default: false })
-const props = defineProps({ initialFranchise: { type: Object, default: null } })
+const props = defineProps({ initialFranchise: { type: Object, default: null }, transactionTypes: { type: Array, required: true } })
 const franchise = ref(null)
 const emit = defineEmits(['created'])
 const route = inject('route')
@@ -29,24 +30,27 @@ const ownerFormOpen = ref(false)
 const page = usePage()
 const canAddOwner = computed(() => page.props.auth?.isSuperAdmin || page.props.auth?.permissions?.includes('view owners'))
 const options = ref({ owners: [], current_owner_ids: [], vehicles: [] })
-const form = reactive({ transaction_type: 'renewal', certificate_issue_date: '' })
+const form = reactive({ transaction_type: '', certificate_issue_date: '', remarks: '' })
 const details = ref({})
 const vehicle = ref({ mode: 'existing', id: '', make_type: '', plate_number: '', motor_number: '', chassis_number: '' })
 const attachments = ref([])
-const types = [{ value: 'application', label: 'Application' }, { value: 'renewal', label: 'Renewal' }, { value: 'substitution', label: 'Substitution' }, { value: 'amendment', label: 'Amendment' }]
-const isTransfer = computed(() => form.transaction_type === 'amendment' && details.value.amendment_type === 'transfer_ownership')
-const hasVehicleStep = computed(() => form.transaction_type !== 'amendment' || isTransfer.value)
-const includesVehicle = computed(() => form.transaction_type !== 'amendment' || (isTransfer.value && details.value.change_vehicle === '1'))
+const selectedType = computed(() => props.transactionTypes.find(type => type.value === form.transaction_type))
+const workflow = computed(() => selectedType.value?.workflow)
+const isTransfer = computed(() => workflow.value === 'amendment' && details.value.amendment_type === 'transfer_ownership')
+const requiresVehicle = computed(() => ['application', 'renewal', 'substitution'].includes(workflow.value))
+const hasVehicleStep = computed(() => requiresVehicle.value || isTransfer.value)
+const includesVehicle = computed(() => requiresVehicle.value || (isTransfer.value && details.value.change_vehicle === '1'))
 const attachmentsStep = computed(() => hasVehicleStep.value ? 4 : 3)
 const title = computed(() => {
     if (step.value === 1) return 'Add Transaction'
     if (step.value === attachmentsStep.value) return 'Attachments'
     if (step.value === 3) return 'Vehicle information'
-    return `${types.find(type => type.value === form.transaction_type)?.label} details`
+    return `${selectedType.value?.label ?? 'Transaction'} details`
 })
-const owners = computed(() => options.value.owners.map(owner => ({ value: owner.id, label: [owner.first_name, owner.middle_name, owner.last_name, owner.suffix].filter(Boolean).join(' ') })))
+const owners = computed(() => options.value.owners.map(owner => ({ value: owner.id, label: formatOwnerName(owner) })))
 const currentOwners = computed(() => owners.value.filter(owner => options.value.current_owner_ids.includes(owner.value)))
 const currentVehicles = computed(() => (options.value.current_vehicles ?? []).map(item => ({ value: item.id, label: `${item.make_type}: ${item.plate_number || item.motor_number || item.chassis_number || '#' + item.id}` })))
+const transactionRequirements = computed(() => (options.value.requirements ?? []).filter(requirement => requirement.transaction_type === form.transaction_type))
 let optionsRequest
 function localDate() {
     const date = new Date()
@@ -76,7 +80,7 @@ async function loadOptions() {
             if (data.current_vehicles?.length === 1) {
                 const current = data.current_vehicles[0]
                 details.value.previous_vehicle_id = current.id
-                if (form.transaction_type === 'renewal') Object.assign(vehicle.value, { ...current, mode: 'existing' })
+                if (workflow.value === 'renewal') Object.assign(vehicle.value, { ...current, mode: 'existing' })
             }
         }
     } catch (error) {
@@ -94,7 +98,8 @@ watch(open, async value => {
         errors.value = {}
         errorMessage.value = ''
         options.value = { owners: [], current_owner_ids: [], vehicles: [] }
-        Object.assign(form, { transaction_type: 'renewal', certificate_issue_date: localDate() })
+        const defaultType = props.transactionTypes.find(type => type.workflow === 'renewal') ?? props.transactionTypes[0]
+        Object.assign(form, { transaction_type: defaultType?.value ?? '', certificate_issue_date: localDate(), remarks: '' })
         resetDetails()
         if (!dialog.value.open) dialog.value.showModal()
         if (franchise.value) loadOptions()
@@ -112,6 +117,7 @@ function ownerSaved(_message, owner) {
     delete errors.value['details.new_owner_id']
 }
 async function submit() {
+    if (!selectedType.value) return
     if (step.value < attachmentsStep.value) {
         step.value++
         await nextTick()
@@ -125,7 +131,7 @@ async function submit() {
     errors.value = {}
     errorMessage.value = ''
     try {
-        if (form.transaction_type === 'substitution') details.value.new_vehicle_id = vehicle.value.mode === 'existing' ? vehicle.value.id : null
+        if (workflow.value === 'substitution') details.value.new_vehicle_id = vehicle.value.mode === 'existing' ? vehicle.value.id : null
         const payload = new FormData()
         const append = (key, value) => {
             if (value === null || value === undefined || value === '') return
@@ -133,7 +139,12 @@ async function submit() {
             else if (typeof value === 'object') Object.entries(value).forEach(([child, item]) => append(`${key}[${child}]`, item))
             else payload.append(key, typeof value === 'boolean' ? (value ? '1' : '0') : String(value))
         }
-        const data = { ...form, franchise_id: franchise.value.id, details: details.value, attachments: attachments.value }
+        const data = {
+            transaction_type: form.transaction_type,
+            franchise_id: franchise.value.id,
+            attachments: attachments.value,
+            ...(workflow.value === 'general' ? { remarks: form.remarks } : { certificate_issue_date: form.certificate_issue_date, details: details.value }),
+        }
         if (includesVehicle.value) data.vehicle = vehicle.value
         Object.entries(data).forEach(([key, value]) => append(key, value))
         await http.post(route('transactions.store'), payload)
@@ -175,17 +186,21 @@ onBeforeUnmount(() => optionsRequest?.abort())
                 <p v-if="optionsError" role="alert" class="text-sm text-red-600">{{ optionsError }} <button type="button" class="underline" @click="loadOptions">Retry</button></p>
                 <fieldset :disabled="saving" class="space-y-4">
                     <template v-if="step === 1">
-                        <Field v-model="form.transaction_type" name="transaction_type" label="Transaction type" :options="types" :errors="errors" required />
+                        <Field v-model="form.transaction_type" name="transaction_type" label="Transaction type" :options="transactionTypes" :errors="errors" required />
+                        <p v-if="!transactionTypes.length" class="text-sm text-gray-600">There are no active transaction types available for filing.</p>
                     </template>
                     <template v-else-if="step === 2">
                         <FranchiseSelect v-model="franchise" :error="errors.franchise_id" />
                         <p v-if="!franchise" class="text-sm text-gray-500">Search and select a franchise to fill in the details.</p>
-                        <div v-if="franchise">
-                        <Field v-model="form.certificate_issue_date" name="certificate_issue_date" label="Requested certificate issue date" type="date" :errors="errors" required />
-                        <Renewal v-if="form.transaction_type === 'renewal'" v-model="details" :owners="currentOwners" :errors="errors" />
-                        <Amendment v-else-if="form.transaction_type === 'amendment'" v-model="details" :owners="owners" :current-owners="currentOwners" :errors="errors" :can-add-owner="canAddOwner && !loading && !optionsError" @add-owner="ownerFormOpen = true" />
-                        <Substitution v-else-if="form.transaction_type === 'substitution'" v-model="details" :current-vehicles="currentVehicles" :errors="errors" />
-                        <Application v-else v-model="details" :owners="owners" :errors="errors" />
+                        <div v-if="franchise" class="space-y-4">
+                            <Field v-if="workflow === 'general'" v-model="form.remarks" name="remarks" label="Remarks (optional)" type="textarea" :errors="errors" />
+                            <template v-else>
+                                <Field v-model="form.certificate_issue_date" name="certificate_issue_date" label="Requested certificate issue date" type="date" :errors="errors" required />
+                                <Renewal v-if="workflow === 'renewal'" v-model="details" :owners="currentOwners" :errors="errors" />
+                                <Amendment v-else-if="workflow === 'amendment'" v-model="details" :owners="owners" :current-owners="currentOwners" :errors="errors" :can-add-owner="canAddOwner && !loading && !optionsError" @add-owner="ownerFormOpen = true" />
+                                <Substitution v-else-if="workflow === 'substitution'" v-model="details" :current-vehicles="currentVehicles" :errors="errors" />
+                                <Application v-else v-model="details" :owners="owners" :errors="errors" />
+                            </template>
                         </div>
                     </template>
                     <template v-else-if="step < attachmentsStep">
@@ -199,15 +214,26 @@ onBeforeUnmount(() => optionsRequest?.abort())
                                 <p v-if="!currentVehicles.length">No vehicle assigned.</p>
                             </div>
                         </template>
-                        <VehicleForm v-if="includesVehicle" v-model="vehicle" :vehicles="form.transaction_type === 'renewal' ? (options.current_vehicles ?? []) : options.vehicles.filter(item => item.id !== details.previous_vehicle_id)" :allow-new="form.transaction_type !== 'renewal'" :errors="errors" />
+                        <VehicleForm v-if="includesVehicle" v-model="vehicle" :vehicles="workflow === 'renewal' ? (options.current_vehicles ?? []) : options.vehicles.filter(item => item.id !== details.previous_vehicle_id)" :allow-new="workflow !== 'renewal'" :errors="errors" />
                     </template>
-                    <Attachments v-else v-model="attachments" :errors="errors" />
+                    <template v-else>
+                        <section v-if="transactionRequirements.length" aria-labelledby="transaction-requirements-title" class="space-y-2 rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-slate-700">
+                            <h3 id="transaction-requirements-title" class="font-semibold text-[#0D47A1]">Transaction requirements</h3>
+                            <ul class="list-disc space-y-2 pl-5">
+                                <li v-for="requirement in transactionRequirements" :key="requirement.id" class="break-words">
+                                    <p class="font-medium">{{ requirement.name }}</p>
+                                    <p v-if="requirement.description" class="whitespace-pre-line text-slate-600">{{ requirement.description }}</p>
+                                </li>
+                            </ul>
+                        </section>
+                        <Attachments v-model="attachments" :errors="errors" />
+                    </template>
                 </fieldset>
                 <p v-if="step === attachmentsStep" class="text-xs text-gray-500">Submitting saves the complete request as pending.</p>
                 <div class="flex justify-end gap-3 border-t border-blue-50 pt-4">
                     <button type="button" :disabled="saving" class="rounded-lg border px-4 py-2 text-sm disabled:opacity-50" @click="close">Cancel</button>
                     <button v-if="step > 1" type="button" :disabled="saving" class="rounded-lg border px-4 py-2 text-sm disabled:opacity-50" @click="step--">Back</button>
-                    <button type="submit" :disabled="saving || (step > 1 && (loading || !!optionsError || !franchise))" class="rounded-lg bg-[#2196F3] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0D47A1] disabled:opacity-50">{{ saving ? 'Saving...' : step < attachmentsStep ? 'Next' : 'Submit transaction' }}</button>
+                    <button type="submit" :disabled="!selectedType || saving || (step > 1 && (loading || !!optionsError || !franchise))" class="rounded-lg bg-[#2196F3] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0D47A1] disabled:opacity-50">{{ saving ? 'Saving...' : step < attachmentsStep ? 'Next' : 'Submit transaction' }}</button>
                 </div>
             </form>
         </dialog>

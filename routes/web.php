@@ -3,10 +3,13 @@
 use App\Http\Controllers\Admin\AdminViewController;
 use App\Http\Controllers\Admin\FranchiseController;
 use App\Http\Controllers\Admin\FranchiseTransactionController;
+use App\Http\Controllers\Admin\LinerController;
 use App\Http\Controllers\Admin\OwnerController;
 use App\Http\Controllers\Admin\OwnershipController;
 use App\Http\Controllers\Admin\PermissionController;
+use App\Http\Controllers\Admin\RequirementController;
 use App\Http\Controllers\Admin\RoleController;
+use App\Http\Controllers\Admin\TransactionTypeController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\VehicleAssignmentController;
 use App\Http\Controllers\Auth\AuthController;
@@ -39,6 +42,10 @@ Route::middleware('auth')->group(function () {
         ->middleware('can:view permissions')->name('permissions.create');
     Route::post('/permissions/{permission}', [PermissionController::class, 'update'])->middleware('can:view permissions')->name('permissions.update');
     Route::delete('/permissions/{permission}', [PermissionController::class, 'destroy'])->middleware('can:view permissions')->name('permissions.destroy');
+    Route::get('/permissions/{permission}/users', [PermissionController::class, 'users'])
+        ->middleware('can:view permissions')->name('permissions.users.index');
+    Route::put('/permissions/{permission}/users/{user}', [PermissionController::class, 'updateUser'])
+        ->middleware('can:view permissions')->name('permissions.users.update');
 
     // Role Management
     Route::get('/roles', [RoleController::class, 'index'])
@@ -61,6 +68,10 @@ Route::middleware('auth')->group(function () {
         ->middleware('can:view franchise')->name('franchise.transactions');
     Route::get('/franchise/{franchise}/vehicles', [VehicleAssignmentController::class, 'options'])->middleware('can:view franchise')->name('franchise.vehicles');
     Route::post('/franchise/{franchise}/vehicles', [VehicleAssignmentController::class, 'store'])->middleware('can:view franchise')->name('franchise.vehicles.store');
+    Route::get('/franchise/{franchise}/liner', [FranchiseController::class, 'linerOptions'])
+        ->middleware('can:view franchise')->name('franchise.liner');
+    Route::patch('/franchise/{franchise}/liner', [FranchiseController::class, 'updateLiner'])
+        ->middleware('can:view franchise')->name('franchise.liner.update');
     Route::post('/franchise', [FranchiseController::class, 'store'])
         ->middleware('can:view franchise')->name('franchise.store');
     Route::post('/franchise/{franchise}', [FranchiseController::class, 'update'])
@@ -77,19 +88,41 @@ Route::middleware('auth')->group(function () {
             ->middleware('can:process transactions')->name('status.update');
         Route::get('/{transaction}/attachments/{attachment}', [FranchiseTransactionController::class, 'download'])->name('attachments.download');
     });
+    Route::middleware('can:process transactions')->prefix('requirements')->name('requirements.')->group(function () {
+        Route::get('/', [RequirementController::class, 'index'])->name('index');
+        Route::post('/', [RequirementController::class, 'store'])->name('store');
+        Route::post('/{requirement}', [RequirementController::class, 'update'])->name('update');
+    });
+
+    Route::middleware('can:process transactions')->prefix('transaction-types')->name('transaction-types.')->group(function () {
+        Route::get('/', [TransactionTypeController::class, 'index'])->name('index');
+        Route::post('/', [TransactionTypeController::class, 'store'])->name('store');
+        Route::post('/{transactionType}', [TransactionTypeController::class, 'update'])->name('update');
+    });
+
     // Ownership records and historical documents
     Route::middleware('can:view ownerships')->prefix('ownerships')->name('ownerships.')->group(function () {
         Route::get('/', [OwnershipController::class, 'index'])->name('index');
         Route::get('/{ownership}', [OwnershipController::class, 'show'])->name('show');
         Route::post('/{ownership}/attachments', [OwnershipController::class, 'storeAttachments'])->name('attachments.store');
         Route::get('/{ownership}/attachments/{attachment}', [OwnershipController::class, 'download'])->name('attachments.download');
+        Route::delete('/{ownership}/attachments/{attachment}', [OwnershipController::class, 'destroyAttachment'])->name('attachments.destroy');
     });
     // Owner Management
     Route::get('/owners', [OwnerController::class, 'index'])->middleware('can:view owners')->name('owners.index');
     Route::get('/owners/franchises', [OwnerController::class, 'franchises'])->middleware('can:view owners')->name('owners.franchises');
+    Route::get('/owners/franchises/{franchise}/setup-options', [OwnerController::class, 'setupOptions'])
+        ->middleware(['can:view owners', 'can:view franchise'])->name('owners.franchises.setup-options');
     Route::post('/owners/{owner}/franchises', [OwnerController::class, 'assignFranchise'])->middleware('can:view owners')->name('owners.franchises.store');
     Route::post('/owners', [OwnerController::class, 'store'])->middleware('can:view owners')->name('owners.store');
     Route::post('/owners/{owner}', [OwnerController::class, 'update'])->middleware('can:view owners')->name('owners.update');
+
+    Route::middleware('can:view liners')->prefix('liners')->name('liners.')->group(function () {
+        Route::get('/', [LinerController::class, 'index'])->name('index');
+        Route::post('/', [LinerController::class, 'store'])->name('store');
+        Route::post('/{liner}', [LinerController::class, 'update'])->name('update');
+    });
+
     // Logout
     Route::post('/logout', [AuthController::class, 'logout'])
         ->name('logout');

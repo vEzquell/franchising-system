@@ -119,3 +119,54 @@ test('assigned permissions cannot be deleted', function (string $assignment) {
         ->assertSessionHasErrors('permission');
     $this->assertDatabaseHas('permissions', ['id' => $permission->id]);
 })->with(['role', 'user']);
+
+test('a permission can be granted directly to one user and removed without changing their role', function () {
+    $permission = Permission::create(['name' => 'reports.view', 'guard_name' => 'web']);
+    $otherPermission = Permission::create(['name' => 'reports.export', 'guard_name' => 'web']);
+    $role = Role::create(['name' => 'staff', 'guard_name' => 'web']);
+    $role->givePermissionTo($permission);
+    $target = User::create(['name' => 'Ana Cruz', 'username' => 'ac-person', 'password' => 'password']);
+    $target->assignRole($role)->givePermissionTo($otherPermission);
+    $list = route('permissions.users.index', ['permission' => $permission, 'search' => 'ac-person']);
+    $update = route('permissions.users.update', [$permission, $target]);
+
+    $this->actingAs($this->manager)->getJson($list)->assertOk()
+        ->assertJsonPath('users.total', 1)->assertJsonPath('users.data.0.id', $target->id)
+        ->assertJsonPath('users.data.0.has_direct_permission', false)->assertJsonMissingPath('users.data.0.password');
+
+    $this->putJson($update, ['granted' => true])->assertOk()->assertJsonPath('users_count', 1);
+    $this->putJson($update, ['granted' => true])->assertOk()->assertJsonPath('users_count', 1);
+    $this->getJson($list)->assertOk()->assertJsonPath('users.data.0.has_direct_permission', true);
+    expect($target->fresh()->hasDirectPermission($permission))->toBeTrue();
+    $this->putJson($update, ['granted' => false])->assertOk()->assertJsonPath('users_count', 0);
+
+    $target->refresh();
+    expect($target->hasDirectPermission($permission))->toBeFalse()
+        ->and($target->hasPermissionTo($permission))->toBeTrue()
+        ->and($target->hasDirectPermission($otherPermission))->toBeTrue();
+});
+
+test('only administrators who hold a permission can delegate it', function () {
+    $pageAccess = Permission::create(['name' => 'view permissions', 'guard_name' => 'web']);
+    $permission = Permission::create(['name' => 'reports.view', 'guard_name' => 'web']);
+    $otherGuard = Permission::create(['name' => 'reports.view', 'guard_name' => 'api']);
+    $delegate = User::create(['name' => 'Delegate', 'username' => 'delegate', 'password' => 'password']);
+    $target = User::create(['name' => 'Staff', 'username' => 'staff', 'password' => 'password']);
+    $delegate->givePermissionTo($pageAccess);
+    $update = route('permissions.users.update', [$permission, $target]);
+
+    $this->putJson($update, ['granted' => true])->assertUnauthorized();
+    $this->actingAs($delegate)->getJson(route('permissions.users.index', $permission))->assertForbidden();
+    $this->putJson($update, ['granted' => true])->assertForbidden();
+    $this->getJson(route('permissions.index', ['search' => 'reports.view']))->assertOk()
+        ->assertJsonPath('permissions.data.0.can_assign_users', false);
+
+    $delegate->givePermissionTo($permission);
+    $this->getJson(route('permissions.index', ['search' => 'reports.view']))->assertOk()
+        ->assertJsonPath('permissions.data.0.can_assign_users', true);
+    $this->putJson($update, ['granted' => null])->assertUnprocessable()->assertJsonValidationErrors('granted');
+    $this->putJson($update, ['granted' => true])->assertOk();
+    $this->actingAs($target)->putJson($update, ['granted' => true])->assertForbidden();
+    $this->actingAs($this->manager)->getJson(route('permissions.users.index', $otherGuard))->assertNotFound();
+    $this->putJson(route('permissions.users.update', [$otherGuard, $target]), ['granted' => true])->assertNotFound();
+});

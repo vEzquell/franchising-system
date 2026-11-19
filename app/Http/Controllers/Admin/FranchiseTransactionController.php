@@ -8,6 +8,8 @@ use App\Models\Attachment;
 use App\Models\Franchise;
 use App\Models\FranchiseOwner;
 use App\Models\FranchiseTransaction;
+use App\Models\Requirement;
+use App\Models\TransactionType;
 use App\Models\Vehicle;
 use App\Services\Admin\FranchiseTransactionService;
 use Illuminate\Http\JsonResponse;
@@ -23,7 +25,7 @@ class FranchiseTransactionController extends Controller
     public function show(Request $request, FranchiseTransaction $transaction): JsonResponse
     {
         return response()->json([
-            'transaction' => $transaction->load(['franchise', 'vehicleDetails.vehicle', 'attachments', 'renewal.owner', 'substitution.previousVehicle', 'substitution.newVehicle', 'amendment.changes', 'amendment.transfer']),
+            'transaction' => $transaction->load(['franchise', 'type:code,name', 'vehicleDetails.vehicle', 'attachments', 'renewal.owner', 'substitution.previousVehicle', 'substitution.newVehicle', 'amendment.changes', 'amendment.transfer']),
             'next_statuses' => $request->user()->can('process transactions') ? $transaction->nextStatuses() : [],
         ]);
     }
@@ -53,7 +55,16 @@ class FranchiseTransactionController extends Controller
         ]);
         $search = trim($filters['search'] ?? '');
         $status = $filters['status'] ?? '';
-        $data = ['transactions' => $service->paginate($search, $status), 'filters' => ['search' => $search, 'status' => $status]];
+        $data = [
+            'transactions' => $service->paginate($search, $status),
+            'filters' => ['search' => $search, 'status' => $status],
+            'transactionTypes' => TransactionType::query()->active()->orderBy('name')->get(['code', 'name'])
+                ->map(fn (TransactionType $type) => [
+                    'value' => $type->code,
+                    'label' => $type->name,
+                    'workflow' => TransactionType::hasBuiltInWorkflow($type->code) ? $type->code : 'general',
+                ]),
+        ];
 
         return $request->wantsJson() ? response()->json($data) : Inertia::render('Admin/Transactions/Index', $data);
     }
@@ -83,11 +94,12 @@ class FranchiseTransactionController extends Controller
     public function options(Franchise $franchise): JsonResponse
     {
         return response()->json([
-            'current_vehicles' => $franchise->vehicleAssignments()->whereDate('started_at', '<=', today())->where(fn ($query) => $query->whereNull('ended_at')->orWhereDate('ended_at', '>', today()))->with('vehicle')->get()->pluck('vehicle'),
+            'current_vehicles' => $franchise->vehicleAssignments()->current()->with('vehicle')->get()->pluck('vehicle'),
             'owners' => FranchiseOwner::orderBy('last_name')->orderBy('first_name')->get(['id', 'first_name', 'middle_name', 'last_name', 'suffix']),
             'current_owner_ids' => $franchise->ownerships()->whereDate('started_at', '<=', today())
                 ->where(fn ($query) => $query->whereNull('ended_at')->orWhereDate('ended_at', '>', today()))->pluck('franchise_owner_id'),
             'vehicles' => Vehicle::orderBy('id')->get(['id', 'make_type', 'plate_number', 'motor_number', 'chassis_number']),
+            'requirements' => Requirement::query()->orderBy('name')->get(['id', 'transaction_type', 'name', 'description']),
         ]);
     }
 

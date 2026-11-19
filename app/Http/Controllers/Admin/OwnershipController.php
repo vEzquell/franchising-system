@@ -9,6 +9,7 @@ use App\Models\FranchiseOwnership;
 use App\Services\Admin\OwnershipService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response as HttpResponse;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -31,13 +32,16 @@ class OwnershipController extends Controller
 
     public function show(Request $request, FranchiseOwnership $ownership): JsonResponse
     {
-        return response()->json(['ownership' => $ownership->load([
-            'franchise:id,franchise_number',
-            'owner:id,first_name,middle_name,last_name,suffix',
-            'attachments' => fn ($query) => $query
-                ->when(! $request->user()->can('view transactions'), fn ($query) => $query->whereNull('franchise_transaction_id'))
-                ->latest()->orderByDesc('id'),
-        ])]);
+        return response()->json([
+            'ownership' => $ownership->load([
+                'franchise:id,franchise_number',
+                'owner:id,first_name,middle_name,last_name,suffix',
+                'attachments' => fn ($query) => $query
+                    ->when(! $request->user()->can('view transactions'), fn ($query) => $query->whereNull('franchise_transaction_id'))
+                    ->latest()->orderByDesc('id'),
+            ]),
+            'can_delete_transaction_attachments' => $request->user()->can(['view transactions', 'process transactions']),
+        ]);
     }
 
     public function storeAttachments(StoreOwnershipAttachmentsRequest $request, FranchiseOwnership $ownership): JsonResponse
@@ -54,5 +58,12 @@ class OwnershipController extends Controller
         abort_unless(Storage::disk($attachment->disk)->exists($attachment->path), 404);
 
         return Storage::disk($attachment->disk)->download($attachment->path, $attachment->original_name);
+    }
+
+    public function destroyAttachment(Request $request, FranchiseOwnership $ownership, Attachment $attachment): HttpResponse
+    {
+        $this->service->deleteAttachment($ownership, $attachment->id, $request->user()->can(['view transactions', 'process transactions']));
+
+        return response()->noContent();
     }
 }

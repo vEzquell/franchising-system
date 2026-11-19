@@ -92,7 +92,13 @@ function Get-ScannerDriverMessage($Exception) {
         { $_ -in @('80210006', '8021000D', '80070020', '80070021') } {
             return 'The scanner is busy or locked. Close any other scanning windows, wait for the printer to become idle, and try again.'
         }
-        { $_ -in @('80210005', '8021000A', '800706BA', '800706BE') } {
+        { $_ -in @('80210001', '8021000E') } {
+            return 'The Windows scanner driver reported an error. Select the Epson/TWAIN entry if available, or close other scanning apps and try again.'
+        }
+        { $_ -in @('800706BA', '800706BE') } {
+            return 'Windows lost contact with the scanner service. Select the Epson/TWAIN entry if available, or restart Windows and try again.'
+        }
+        { $_ -in @('80210005', '8021000A') } {
             return 'Windows lost contact with the scanner driver. Check the printer and USB connection. If the printer is still unavailable, restart it and try again.'
         }
     }

@@ -47,26 +47,29 @@ function Assert-ScannerIsIdle {
     }
 }
 
-function Get-ScannerDevices {
+function Get-ScannerDevices([hashtable]$TwainSources = @{}) {
     $manager = $null
     try {
         $manager = New-Object -ComObject WIA.DeviceManager
         foreach ($info in $manager.DeviceInfos) {
             if ([int]$info.Type -ne 1) { continue }
 
-            $name = PropertyValue $info.Properties 7 'Windows scanner'
-            $device = $null
-            $sources = @('flatbed')
-            try {
-                $device = $info.Connect()
-                $sources = @(Get-WiaSources $device (Get-WiaSourceItems $device))
+            $name = [string](PropertyValue $info.Properties 7 'Windows scanner')
+            $sources = $TwainSources[$name]
+            if ($null -eq $sources) {
+                $device = $null
+                $sources = @('flatbed')
+                try {
+                    $device = $info.Connect()
+                    $sources = @(Get-WiaSources $device (Get-WiaSourceItems $device))
+                }
+                catch { Write-Warning "WIA could not check sources for ${name}: $(Get-ScannerDriverMessage $_.Exception)" }
+                finally { Release-WiaObject $device }
             }
-            catch { Write-Warning "WIA could not check sources for ${name}: $(Get-ScannerDriverMessage $_.Exception)" }
-            finally { Release-WiaObject $device }
 
             @{
                 id = [string]$info.DeviceID
-                name = [string]$name
+                name = $name
                 backend = 'wia'
                 sources = $sources
             }
@@ -79,22 +82,36 @@ function Get-ScannerDevices {
 
 function Get-AvailableScannerDevices {
     Assert-ScannerIsIdle
-    $native = @()
-    if ($nativeAvailable) {
-        try { $native = @(Get-NativeScanners) }
-        catch { Write-Warning "Windows native scanner discovery failed: $($_.Exception.Message)" }
-    }
-    Assert-ScannerIsIdle
-    $native
     try {
         $script:twainDevices = @(Get-TwainScanners)
-        $script:twainDevices
     }
     catch {
         $script:twainDevices = @()
         Write-Warning "TWAIN scanner discovery failed: $($_.Exception.Message)"
     }
-    try { Get-ScannerDevices }
+
+    # Use the matching TWAIN entry's sources without opening the Windows driver during discovery.
+    $twainSources = @{}
+    foreach ($device in $script:twainDevices) { $twainSources[$device.name] = $device.sources }
+    $native = @()
+    if ($nativeAvailable) {
+        try { $native = @(Get-NativeScanners $twainSources) }
+        catch { Write-Warning "Windows native scanner discovery failed: $($_.Exception.Message)" }
+    }
+    Assert-ScannerIsIdle
+
+    # Prefer TWAIN for a matching scanner while keeping other devices in discovery order.
+    $remainingTwainDevices = $script:twainDevices
+    foreach ($device in $native) {
+        if ($device.sources -contains 'feeder') {
+            $remainingTwainDevices | Where-Object { $_.name -eq $device.name }
+            $remainingTwainDevices = @($remainingTwainDevices | Where-Object { $_.name -ne $device.name })
+        }
+        $device
+    }
+    $remainingTwainDevices
+
+    try { Get-ScannerDevices $twainSources }
     catch {
         if (!$native.Count -and !$script:twainDevices.Count) { throw }
         Write-Warning "Legacy scanner discovery failed: $($_.Exception.Message)"
@@ -117,7 +134,7 @@ function Get-ScannedPages($Body) {
         throw 'Choose one page for a flatbed scan.'
     }
     $paperSize = [string]$Body.paper_size
-    if (!$paperSize) { $paperSize = 'auto' }
+    if (!$paperSize) { $paperSize = 'legal' }
     if ($paperSize -cnotin $paperSizes) { throw 'Choose a supported paper size.' }
     Assert-ScannerIsIdle
 

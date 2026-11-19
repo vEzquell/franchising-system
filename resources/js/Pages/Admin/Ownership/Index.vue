@@ -4,6 +4,7 @@
     import { Eye, FileText, Search, Paperclip, ChevronLeft, ChevronRight } from 'lucide-vue-next'
     import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
     import Documents from './Documents.vue'
+    import { formatOwnerName } from '@/lib/formatOwnerName'
     import http from '@/lib/http'
     const props = defineProps({ ownerships: { type: Object, required: true }, filters: { type: Object, default: () => ({ search: '', period: '' }) }, today: { type: String, required: true } })
     const route = inject('route')
@@ -19,14 +20,7 @@
     let request
     let timer
 
-    const fullName = owner => owner
-        ? [
-            owner.first_name,
-            owner.middle_name ? `${owner.middle_name.replace(/\.$/, '')}.` : null,
-            owner.last_name,
-            owner.suffix
-        ].filter(Boolean).join(' ')
-        : 'Unknown owner'
+    const fullName = owner => formatOwnerName(owner) || 'Unknown owner'
     const date = value => value?.slice(0, 10) ?? ''
 
     const state = ownership => date(ownership.started_at) > props.today ? 'Upcoming' : ownership.ended_at && date(ownership.ended_at) <= props.today ? 'Previous' : 'Current'
@@ -36,6 +30,7 @@
         documentsOpen.value = true
     }
     function uploaded() { notice.value = 'Ownership documents uploaded.'; load(ownerships.value.current_page) }
+    function deleted() { notice.value = 'Attachment deleted.'; load(ownerships.value.current_page) }
     async function load(page = 1) {
         clearTimeout(timer)
         request?.abort()
@@ -94,6 +89,6 @@
                 <div class="flex flex-col gap-3 border-t border-[#E3F2FD] px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><p class="text-sm text-gray-500">Showing {{ ownerships.from ?? 0 }} to {{ ownerships.to ?? 0 }} of {{ ownerships.total }} records</p><nav aria-label="Ownership pagination" class="flex items-center gap-3 text-sm text-[#0D47A1]"><button type="button" :disabled="loading || !ownerships.prev_page_url" aria-label="Previous page" class="rounded-lg border p-2 disabled:opacity-40" @click="load(ownerships.current_page - 1)"><ChevronLeft class="h-4 w-4" /></button><span>Page {{ ownerships.current_page }} of {{ ownerships.last_page }}</span><button type="button" :disabled="loading || !ownerships.next_page_url" aria-label="Next page" class="rounded-lg border p-2 disabled:opacity-40" @click="load(ownerships.current_page + 1)"><ChevronRight class="h-4 w-4" /></button></nav></div>
             </div>
         </div>
-        <Documents v-model:open="documentsOpen" :ownership-id="selectedId" :mode="documentsMode" @uploaded="uploaded" />
+        <Documents v-model:open="documentsOpen" :ownership-id="selectedId" :mode="documentsMode" @uploaded="uploaded" @deleted="deleted" />
     </AuthenticatedLayout>
 </template>

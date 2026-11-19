@@ -4,6 +4,7 @@ namespace App\Services\Admin;
 
 use App\Models\Franchise;
 use App\Models\FranchiseTransaction;
+use App\Models\TransactionType;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -25,7 +26,9 @@ class FranchiseTransactionService
             }
 
             if ($status === 'approved') {
-                $this->applyCertificateDates($franchise, $transaction);
+                if (TransactionType::hasBuiltInWorkflow($transaction->transaction_type)) {
+                    $this->applyCertificateDates($franchise, $transaction);
+                }
                 if ($transfer = $transaction->amendment?->transfer) {
                     $ownership = app(OwnerService::class)->transfer($franchise, $transfer);
                     $transaction->attachments()->update(['franchise_ownership_id' => $ownership->id]);
@@ -68,7 +71,7 @@ class FranchiseTransactionService
 
     public function paginate(string $search = '', string $status = ''): LengthAwarePaginator
     {
-        return FranchiseTransaction::query()->with('franchise:id,franchise_number')->withCount('attachments')
+        return FranchiseTransaction::query()->with(['franchise:id,franchise_number', 'type:code,name'])->withCount('attachments')
             ->when($search !== '', fn (Builder $query) => $query->whereHas('franchise', fn (Builder $query) => $query->where('franchise_number', 'like', '%'.$search.'%')))
             ->when($status !== '', fn (Builder $query) => $query->where('status', $status))
             ->orderByDesc('created_at')->orderByDesc('id')->paginate(10)->withQueryString();
@@ -79,6 +82,10 @@ class FranchiseTransactionService
         $storedPaths = [];
         try {
             return DB::transaction(function () use ($franchise, $data, &$storedPaths) {
+                $type = TransactionType::query()->active()->sharedLock()->find($data['transaction_type']);
+                if (! $type) {
+                    throw ValidationException::withMessages(['transaction_type' => 'Select an active transaction type.']);
+                }
                 $franchise = Franchise::query()->lockForUpdate()->findOrFail($franchise->id);
                 $vehicle = null;
                 if (! empty($data['vehicle'])) {
@@ -98,9 +105,10 @@ class FranchiseTransactionService
                     // Legacy required DATE column; created_at is the authoritative filing timestamp.
                     'date_filed' => today()->toDateString(),
                     'certificate_issue_date' => $data['certificate_issue_date'] ?? null,
+                    'remarks' => $data['remarks'] ?? null,
                     'status' => 'pending',
                 ]);
-                $details = $data['details'];
+                $details = $data['details'] ?? [];
                 if ($data['transaction_type'] === 'renewal') {
                     $transaction->renewal()->create(Arr::only($details, ['franchise_owner_id', 'renewal_date', 'previous_expiration_date', 'new_expiration_date']));
                 } elseif ($data['transaction_type'] === 'substitution') {

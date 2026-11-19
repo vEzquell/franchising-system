@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Models\FranchiseVehicleAssignment;
+use App\Models\TransactionType;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -63,20 +64,27 @@ class StoreFranchiseTransactionRequest extends FormRequest
 
     public function rules(): array
     {
+        $hasBuiltInWorkflow = TransactionType::hasBuiltInWorkflow($this->input('transaction_type'));
         $rules = [
             ...$this->vehicleRules(),
             'vehicle' => [
                 Rule::requiredIf($this->changesVehicleDuringTransfer() || ($this->routeIs('transactions.store') && in_array($this->input('transaction_type'), ['application', 'renewal', 'substitution']))),
-                Rule::prohibitedIf($this->input('transaction_type') === 'amendment' && ! $this->changesVehicleDuringTransfer()),
+                Rule::prohibitedIf(! $hasBuiltInWorkflow || ($this->input('transaction_type') === 'amendment' && ! $this->changesVehicleDuringTransfer())),
                 'array',
             ],
             'attachments' => ['sometimes', 'array', 'max:10'],
             'attachments.*.document_name' => ['required', 'string', 'max:255'],
             'attachments.*.document_type' => ['sometimes', 'required', 'string', 'max:100'],
             'attachments.*.file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
-            'transaction_type' => ['required', Rule::in(['application', 'renewal', 'substitution', 'amendment'])],
-            'certificate_issue_date' => ['sometimes', 'required', 'date_format:Y-m-d'],
-            'details' => ['required', 'array'],
+            'transaction_type' => ['bail', 'required', 'string', 'max:24', 'regex:/^[a-z0-9_]+$/', Rule::exists(TransactionType::class, 'code')->where('is_active', true)],
+            ...($hasBuiltInWorkflow ? [
+                'certificate_issue_date' => ['sometimes', 'required', 'date_format:Y-m-d'],
+                'details' => ['required', 'array'],
+            ] : [
+                'certificate_issue_date' => ['prohibited'],
+                'details' => ['prohibited'],
+                'remarks' => ['nullable', 'string', 'max:5000'],
+            ]),
             ...($this->routeIs('transactions.store') ? ['franchise_id' => ['required', 'integer', 'exists:franchises,id']] : []),
         ];
         $owner = Rule::exists('franchise_ownerships', 'franchise_owner_id')->where(fn ($query) => $query

@@ -76,6 +76,11 @@ class FranchiseTransaction extends Model
         return $this->belongsTo(Franchise::class, 'franchise_id');
     }
 
+    public function type(): BelongsTo
+    {
+        return $this->belongsTo(TransactionType::class, 'transaction_type');
+    }
+
     public function processor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'processed_by');

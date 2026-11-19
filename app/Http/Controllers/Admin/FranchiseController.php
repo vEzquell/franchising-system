@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\SaveFranchiseRequest;
 use App\Models\Franchise;
+use App\Models\Liner;
 use App\Services\Admin\FranchiseServices;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -40,6 +41,26 @@ class FranchiseController extends Controller
         $request->validate(['page' => ['sometimes', 'integer', 'min:1']]);
 
         return response()->json(['transactions' => $this->franchiseServices->transactions($franchise)]);
+    }
+
+    public function linerOptions(Franchise $franchise): JsonResponse
+    {
+        return response()->json([
+            'liner_id' => $franchise->liner_id,
+            'liners' => Liner::query()->orderBy('name')->get(['id', 'name', 'route']),
+        ]);
+    }
+
+    public function updateLiner(Request $request, Franchise $franchise): JsonResponse
+    {
+        $data = $request->validate([
+            'liner_id' => ['bail', 'present', 'nullable', 'integer', Rule::exists(Liner::class, 'id')],
+        ]);
+
+        $franchise->liner()->associate($data['liner_id']);
+        $franchise->save();
+
+        return response()->json(['message' => $data['liner_id'] === null ? 'Liner unlinked.' : 'Liner linked.']);
     }
 
     public function store(SaveFranchiseRequest $request): JsonResponse

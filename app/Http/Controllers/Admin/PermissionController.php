@@ -4,6 +4,9 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\SavePermissionRequest;
+use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -44,7 +47,10 @@ class PermissionController extends Controller
                 ->withCount(['roles', 'users'])
                 ->orderBy('name')
                 ->paginate(10)
-                ->withQueryString(),
+                ->withQueryString()
+                ->through(fn (Permission $permission) => $permission->setAttribute(
+                    'can_assign_users', $this->canAssignUsers($request->user(), $permission)
+                )),
 
             'filters' => [
                 'search' => $search,
@@ -74,6 +80,52 @@ class PermissionController extends Controller
         $permission->update($request->validated());
 
         return $request->wantsJson() ? response()->json(['message' => 'Permission updated.']) : back();
+    }
+
+    public function users(Request $request, Permission $permission): JsonResponse
+    {
+        abort_unless($permission->guard_name === 'web', 404);
+        abort_unless($this->canAssignUsers($request->user(), $permission), 403);
+
+        $filters = $request->validate(['search' => ['nullable', 'string', 'max:255'], 'page' => ['sometimes', 'integer', 'min:1']]);
+        $search = trim($filters['search'] ?? '');
+        $users = User::query()->select(['id', 'name', 'username'])
+            ->withExists(['permissions as has_direct_permission' => fn (Builder $query) => $query->whereKey($permission->id)])
+            ->when($search !== '', fn (Builder $query) => $query->where(fn (Builder $user) => $user
+                ->whereLike('name', '%'.$search.'%')->orWhereLike('username', '%'.$search.'%')))
+            ->orderBy('name')->orderBy('id')->paginate(10);
+
+        return response()->json(['users' => $users]);
+    }
+
+    public function updateUser(Request $request, Permission $permission, User $user): JsonResponse
+    {
+        abort_unless($permission->guard_name === 'web', 404);
+        abort_unless($this->canAssignUsers($request->user(), $permission), 403);
+        $request->validate(['granted' => ['required', 'boolean']]);
+        $granted = $request->boolean('granted');
+
+        if ($granted) {
+            try {
+                $user->givePermissionTo($permission);
+            } catch (UniqueConstraintViolationException $exception) {
+                if (! $user->permissions()->whereKey($permission->id)->exists()) {
+                    throw $exception;
+                }
+            }
+        } else {
+            $user->revokePermissionTo($permission);
+        }
+
+        return response()->json([
+            'message' => $granted ? 'Direct permission granted.' : 'Direct permission removed.',
+            'users_count' => $permission->users()->count(),
+        ]);
+    }
+
+    private function canAssignUsers(User $actor, Permission $permission): bool
+    {
+        return $actor->hasRole('superadmin') || $actor->hasPermissionTo($permission);
     }
 
     public function destroy(Request $request, Permission $permission): RedirectResponse|JsonResponse

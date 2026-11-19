@@ -5,7 +5,8 @@
     import { usePermissionForm } from '@/Composables/usePermissionForm'
     import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
     import CreatePermission from './Create.vue'
-    import { ShieldCheck, Search, Plus, Pencil, Trash2, X, ChevronLeft, ChevronRight } from 'lucide-vue-next'
+    import PermissionUsers from './PermissionUsers.vue'
+    import { ShieldCheck, Search, Plus, Pencil, Trash2, Users, X, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 
     const props = defineProps({
         permissions: { type: Object, required: true },
@@ -16,6 +17,8 @@
     const search = ref(props.filters.search)
     const notice = ref('')
     const createOpen = ref(false)
+    const assignmentsOpen = ref(false)
+    const assignmentPermission = ref(null)
     onMounted(() => {
         if (new URLSearchParams(window.location.search).get('create') === '1') {
             createOpen.value = true
@@ -97,6 +100,16 @@
         loadPermissions(permissions.value.current_page)
     }
 
+    function openAssignments(permission) {
+        assignmentPermission.value = permission
+        assignmentsOpen.value = true
+    }
+
+    function assignmentsUpdated(permissionId, count) {
+        const permission = permissions.value.data.find(item => item.id === permissionId)
+        if (permission) permission.users_count = count
+    }
+
     const formatDate = (value) => value ? new Date(value).toLocaleDateString() : '—'
 </script>
 
@@ -147,6 +160,7 @@
                                 <td class="px-5 py-4 text-gray-500">{{ formatDate(permission.created_at) }}</td>
                                 <td  class="px-5 py-4">
                                     <div class="flex justify-center gap-2">
+                                        <button v-if="permission.can_assign_users" type="button" :aria-label="`Manage users for ${permission.name}`" class="inline-flex items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-semibold text-[#0D47A1] hover:bg-blue-100" @click="openAssignments(permission)"><Users aria-hidden="true" class="h-3.5 w-3.5" /> Users</button>
                                         <button type="button" :aria-label="`Edit ${permission.name}`" class="inline-flex items-center gap-1.5 rounded-lg bg-[#E3F2FD] px-3 py-2 text-xs font-semibold text-[#0D47A1] hover:bg-[#90CAF9]" @click="openDialog('edit', permission)"><Pencil class="h-3.5 w-3.5" /> Edit</button>
                                         <button type="button" :aria-label="`Delete ${permission.name}`" class="inline-flex items-center gap-1.5 rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-100" @click="openDialog('delete', permission)"><Trash2 class="h-3.5 w-3.5" /> Delete</button>
                                     </div>
@@ -196,5 +210,6 @@
             </form>
         </dialog>
         <CreatePermission  v-model:open="createOpen" @created="permissionCreated" />
+        <PermissionUsers v-model:open="assignmentsOpen" :permission="assignmentPermission" @updated="assignmentsUpdated" />
     </AuthenticatedLayout>
 </template>

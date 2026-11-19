@@ -60,7 +60,8 @@ onBeforeUnmount(() => request?.abort())
             <div class="mb-4 flex items-center justify-between"><h2 id="transaction-details-title" class="text-lg font-bold text-[#0D47A1]">Transaction details</h2><button type="button" :disabled="saving" aria-label="Close transaction details" class="rounded-lg p-2 hover:bg-blue-50" @click="open = false"><X class="h-5 w-5" /></button></div>
             <p v-if="loading" role="status">Loading...</p><p v-if="errorMessage" role="alert" class="text-sm text-red-600">{{ errorMessage }} <button type="button" class="underline" @click="load">Retry</button></p>
             <div v-if="transaction" class="space-y-4 text-sm">
-                <p><strong>Franchise:</strong> {{ transaction.franchise?.franchise_number }}</p><p class="capitalize"><strong>Type:</strong> {{ transaction.transaction_type }}</p><p class="capitalize"><strong>Status:</strong> {{ transaction.status.replaceAll('_', ' ') }}</p>
+                <p><strong>Franchise:</strong> {{ transaction.franchise?.franchise_number }}</p><p><strong>Type:</strong> {{ transaction.type?.name ?? transaction.transaction_type }}</p><p class="capitalize"><strong>Status:</strong> {{ transaction.status.replaceAll('_', ' ') }}</p>
+                <p v-if="transaction.remarks" class="whitespace-pre-line break-words"><strong>Remarks:</strong> {{ transaction.remarks }}</p>
                 <p v-if="transaction.certificate_issue_date"><strong>Requested certificate issue date</strong> {{ transaction.certificate_issue_date }}</p>
                 <form v-if="nextStatuses.length" class="space-y-2 rounded-lg border border-blue-100 p-3" @submit.prevent="updateStatus">
                     <label for="next-transaction-status" class="block font-semibold">Change status</label>

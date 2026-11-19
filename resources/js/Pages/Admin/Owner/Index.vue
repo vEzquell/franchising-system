@@ -5,6 +5,7 @@
     import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
     import OwnerForm from './Create.vue'
     import AssignFranchise from './AssignFranchise.vue'
+    import { formatOwnerName as fullName } from '@/lib/formatOwnerName'
     import http from '@/lib/http'
 
     const props = defineProps({ owners: { type: Object, required: true }, filters: { type: Object, default: () => ({ search: '' }) } })
@@ -24,13 +25,6 @@
     const viewDialog = ref(null)
     let searchTimer
     let listRequest
-
-const fullName = owner => [
-    owner.first_name,
-    owner.middle_name ? `${owner.middle_name}.` : null,
-    owner.last_name,
-    owner.suffix
-].filter(Boolean).join(' ')
 
 function openForm(owner = null) {
     selected.value = owner
@@ -106,7 +100,7 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); listRequest?.abort() })
             </div>
         </div>
         <AssignFranchise v-model:open="assignOpen" :owner="assignOwner" @assigned="assigned" />
-        <OwnerForm v-model:open="formOpen" :owner="selected" @saved="saved" />
+        <OwnerForm v-model:open="formOpen" :owner="selected" with-franchise @saved="saved" />
         <dialog ref="viewDialog" aria-labelledby="owner-view-title" class="m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-xl bg-white p-6 shadow-xl backdrop:bg-black/50">
             <div class="mb-5 flex items-center justify-between"><h2 id="owner-view-title" class="text-lg font-bold text-[#0D47A1]">Owner details</h2><button type="button" aria-label="Close owner details" class="rounded-lg p-2 hover:bg-blue-50" @click="viewDialog.close()"><X class="h-5 w-5" /></button></div>
             <dl v-if="viewed" class="space-y-4 text-sm"><div><dt class="text-gray-500">Name</dt><dd class="mt-1 font-semibold">{{ fullName(viewed) }}</dd></div><div><dt class="text-gray-500">Contact number</dt><dd class="mt-1">{{ viewed.contact_number || 'Not set' }}</dd></div><div><dt class="text-gray-500">Address</dt><dd class="mt-1 break-words">{{ viewed.address || 'Not set' }}</dd></div></dl>

@@ -13,7 +13,11 @@ class VehicleAssignmentController extends Controller
 {
     public function options(Franchise $franchise): JsonResponse
     {
-        return response()->json(['vehicles' => Vehicle::orderBy('id')->get()]);
+        return response()->json([
+            'vehicles' => Vehicle::orderBy('id')->get(),
+            'current_assignment' => $franchise->vehicleAssignments()->current()->with('vehicle')
+                ->orderByDesc('started_at')->orderByDesc('id')->first(),
+        ]);
     }
 
     public function store(AssignVehicleRequest $request, Franchise $franchise, VehicleService $service): JsonResponse

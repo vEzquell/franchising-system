@@ -4,6 +4,7 @@ use App\Models\Attachment;
 use App\Models\Franchise;
 use App\Models\FranchiseOwner;
 use App\Models\User;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -80,4 +81,69 @@ test('ownership documents require a descriptive name and save it separately from
     expect($attachment->document_name)->toBe('2026 franchise certificate')
         ->and($attachment->document_type)->toBe('PDF')
         ->and($attachment->original_name)->toBe('scan-page.pdf');
+});
+
+test('staff can delete only an attachment belonging to the selected ownership', function () {
+    $this->actingAs($this->staff)->postJson(route('ownerships.attachments.store', $this->ownership), [
+        'attachments' => [
+            ['document_name' => 'Replace this', 'file' => UploadedFile::fake()->create('replace.pdf', 20, 'application/pdf')],
+            ['document_name' => 'Keep this', 'file' => UploadedFile::fake()->create('keep.pdf', 20, 'application/pdf')],
+        ],
+    ])->assertCreated();
+    $attachment = $this->ownership->attachments()->where('document_name', 'Replace this')->sole();
+    $remaining = $this->ownership->attachments()->where('document_name', 'Keep this')->sole();
+    $previousOwnership = $this->owner->ownerships()->create(['franchise_id' => $this->franchise->id, 'started_at' => today()->subYears(2), 'ended_at' => today()->subYear()]);
+    $deleteUrl = route('ownerships.attachments.destroy', [$this->ownership, $attachment]);
+
+    $other = User::create(['name' => 'Other', 'username' => 'no-ownership', 'password' => 'password']);
+    $this->actingAs($other)->deleteJson($deleteUrl)->assertForbidden();
+    $this->actingAs($this->staff)->deleteJson(route('ownerships.attachments.destroy', [$previousOwnership, $attachment]))->assertNotFound();
+    Storage::disk('local')->assertExists($attachment->path);
+
+    $this->deleteJson($deleteUrl)->assertNoContent();
+    $this->deleteJson($deleteUrl)->assertNotFound();
+    Storage::disk('local')->assertMissing($attachment->path)->assertExists($remaining->path);
+    $this->assertModelMissing($attachment);
+    $this->getJson(route('ownerships.show', $this->ownership))->assertOk()->assertJsonCount(1, 'ownership.attachments')
+        ->assertJsonPath('ownership.attachments.0.id', $remaining->id);
+    $this->getJson(route('ownerships.index', ['period' => 'current']))->assertOk()->assertJsonPath('ownerships.data.0.attachments_count', 1);
+});
+
+test('deleting a transaction attachment from ownership requires transaction processing access', function () {
+    $transaction = $this->franchise->transactions()->create(['transaction_type' => 'application', 'date_filed' => today()]);
+    $attachment = $transaction->attachments()->create([
+        'franchise_ownership_id' => $this->ownership->id,
+        'document_type' => 'PDF', 'document_name' => 'Application', 'original_name' => 'application.pdf',
+        'disk' => 'local', 'path' => 'transaction-attachments/application.pdf', 'mime_type' => 'application/pdf', 'size' => 7,
+    ]);
+    $disk = Storage::disk('local');
+    $disk->put($attachment->path, 'Example');
+    $deleteUrl = route('ownerships.attachments.destroy', [$this->ownership, $attachment]);
+
+    $this->staff->givePermissionTo(Permission::create(['name' => 'view transactions', 'guard_name' => 'web']));
+    $this->actingAs($this->staff)->getJson(route('ownerships.show', $this->ownership))->assertOk()
+        ->assertJsonPath('ownership.attachments.0.id', $attachment->id)->assertJsonPath('can_delete_transaction_attachments', false);
+    $this->deleteJson($deleteUrl)->assertForbidden();
+    $disk->assertExists($attachment->path);
+
+    $this->staff->givePermissionTo(Permission::create(['name' => 'process transactions', 'guard_name' => 'web']));
+    $this->getJson(route('ownerships.show', $this->ownership))->assertOk()->assertJsonPath('can_delete_transaction_attachments', true);
+    $this->deleteJson($deleteUrl)->assertNoContent();
+    $this->get(route('transactions.attachments.download', [$transaction, $attachment]))->assertNotFound();
+    $disk->assertMissing($attachment->path);
+});
+
+test('an attachment stays listed when its stored file cannot be deleted', function () {
+    $this->actingAs($this->staff)->postJson(route('ownerships.attachments.store', $this->ownership), [
+        'attachments' => [['document_name' => 'Certificate', 'file' => UploadedFile::fake()->create('certificate.pdf', 20, 'application/pdf')]],
+    ])->assertCreated();
+    $attachment = $this->ownership->attachments()->sole();
+    $disk = Storage::disk('local');
+    $failingDisk = Mockery::mock(FilesystemAdapter::class);
+    $failingDisk->shouldReceive('delete')->once()->with($attachment->path)->andReturnFalse();
+    Storage::shouldReceive('disk')->once()->with('local')->andReturn($failingDisk);
+
+    $this->deleteJson(route('ownerships.attachments.destroy', [$this->ownership, $attachment]))->assertInternalServerError();
+    $this->assertModelExists($attachment);
+    $disk->assertExists($attachment->path);
 });

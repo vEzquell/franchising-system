@@ -1,7 +1,8 @@
 <script setup>
-import { inject, nextTick, ref, watch } from 'vue'
+import { computed, inject, nextTick, ref, watch } from 'vue'
 import { X } from 'lucide-vue-next'
 import FranchiseSelect from '../Transactions/FranchiseSelect.vue'
+import { formatOwnerName } from '@/lib/formatOwnerName'
 import http from '@/lib/http'
 const open = defineModel('open', { type: Boolean, default: false })
 const props = defineProps({ owner: { type: Object, default: null } })
@@ -11,7 +12,11 @@ const dialog = ref(null)
 const franchise = ref(null)
 const startedAt = ref('')
 const expirationDate = ref('')
-watch(franchise, value => { expirationDate.value = value?.expiration_date?.slice(0, 10) ?? '' })
+const issueDate = computed(() => franchise.value?.date_issued?.slice(0, 10) ?? '')
+watch(franchise, value => {
+    startedAt.value = issueDate.value
+    expirationDate.value = value?.expiration_date?.slice(0, 10) ?? ''
+})
 const saving = ref(false)
 const errors = ref({})
 const errorMessage = ref('')
@@ -20,8 +25,7 @@ watch(open, async value => {
     if (value) {
         franchise.value = null
         expirationDate.value = ''
-        const date = new Date()
-        startedAt.value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+        startedAt.value = ''
         errors.value = {}
         errorMessage.value = ''
         dialog.value.showModal()
@@ -49,11 +53,16 @@ async function submit() {
         <dialog ref="dialog" aria-labelledby="assign-franchise-title" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-xl bg-white p-6 shadow-xl backdrop:bg-black/50" @cancel.prevent="close" @close="open = false">
             <form class="space-y-4" @submit.prevent="submit">
                 <div class="flex items-center justify-between"><h2 id="assign-franchise-title" class="text-lg font-bold text-[#0D47A1]">Assign Franchise</h2><button type="button" aria-label="Close Assign Franchise" :disabled="saving" class="rounded-lg p-2 hover:bg-blue-50" @click="close"><X class="h-5 w-5" /></button></div>
-                <p class="text-sm text-gray-600">Owner: <strong>{{ [owner?.first_name, owner?.middle_name, owner?.last_name, owner?.suffix].filter(Boolean).join(' ') }}</strong></p>
+                <p class="text-sm text-gray-600">Owner: <strong>{{ formatOwnerName(owner) }}</strong></p>
                 <p v-if="errorMessage" role="alert" class="text-sm text-red-600">{{ errorMessage }}</p>
                 <fieldset :disabled="saving" class="space-y-4">
                     <FranchiseSelect v-if="open" v-model="franchise" search-route="owners.franchises" :error="errors.franchise_id" />
-                    <div><label for="ownership-start-date" class="mb-2 block text-sm font-medium text-gray-700">Ownership start date</label><input id="ownership-start-date" v-model="startedAt" type="date" required :aria-invalid="!!errors.started_at" aria-describedby="ownership-start-error" class="w-full rounded-lg border border-[#90CAF9] px-3 py-2.5 text-sm" /><p v-if="errors.started_at" id="ownership-start-error" role="alert" class="mt-1 text-sm text-red-600">{{ errors.started_at }}</p></div>
+                    <div>
+                        <label for="ownership-start-date" class="mb-2 block text-sm font-medium text-gray-700">{{ franchise && !issueDate ? 'Franchise issue date' : 'Ownership start date' }}</label>
+                        <input id="ownership-start-date" v-model="startedAt" type="date" required :readonly="!!issueDate" :disabled="!franchise" :aria-invalid="!!errors.started_at" aria-describedby="ownership-start-help ownership-start-error" class="w-full rounded-lg border border-[#90CAF9] px-3 py-2.5 text-sm disabled:bg-slate-50 read-only:bg-slate-50" />
+                        <p v-if="franchise" id="ownership-start-help" class="mt-1 text-xs text-gray-500">{{ issueDate ? 'Uses the franchise issue date.' : 'This date also becomes the ownership start date.' }}</p>
+                        <p v-if="errors.started_at" id="ownership-start-error" role="alert" class="mt-1 text-sm text-red-600">{{ errors.started_at }}</p>
+                    </div>
                     <div>
                         <label for="assignment-expiration-date" class="mb-2 block text-sm font-medium text-gray-700">Franchise expiration date</label>
                         <input id="assignment-expiration-date" v-model="expirationDate" type="date" required :min="startedAt" :aria-invalid="!!errors.expiration_date" aria-describedby="assignment-expiration-error" class="w-full rounded-lg border border-[#90CAF9] px-3 py-2.5 text-sm" />

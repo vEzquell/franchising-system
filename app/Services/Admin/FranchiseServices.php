@@ -29,21 +29,23 @@ class FranchiseServices
                         });
                 });
             })
-            ->when($status !== '', fn (Builder $query) => $query->where('status', $status))
+            ->when($status !== '', fn (Builder $query) => $query->whereEffectiveStatus($status))
+            ->with('liner:id,name,route')
             ->with(['ownerships' => fn (HasMany $query) => $currentOwnership($query->getQuery())
                 ->with('owner:id,first_name,middle_name,last_name,suffix')->orderByDesc('started_at')->orderByDesc('id')])
-            ->with(['vehicleAssignments' => fn (HasMany $query) => $query->whereDate('started_at', '<=', today())
-                ->where(fn (Builder $query) => $query->whereNull('ended_at')->orWhereDate('ended_at', '>', today()))->with('vehicle')])
+            ->with(['vehicleAssignments' => fn (HasMany $query) => $query->current()->with('vehicle')])
             ->withCount('transactions')
             ->orderBy('franchise_number')
             ->orderBy('id')
             ->paginate(10)
-            ->withQueryString();
+            ->withQueryString()
+            ->through(fn (Franchise $franchise) => $franchise->append('recorded_status'));
     }
 
     public function transactions(Franchise $franchise): LengthAwarePaginator
     {
         return $franchise->transactions()
+            ->with('type:code,name')
             ->select(['id', 'franchise_id', 'transaction_type', 'status', 'created_at', 'approved_at'])
             ->orderByDesc('created_at')->orderByDesc('id')->paginate(10)->withQueryString();
     }

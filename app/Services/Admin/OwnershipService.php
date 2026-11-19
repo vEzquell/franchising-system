@@ -46,4 +46,16 @@ class OwnershipService
             throw $exception;
         }
     }
+
+    public function deleteAttachment(FranchiseOwnership $ownership, int $attachmentId, bool $canDeleteTransactionAttachments): void
+    {
+        DB::transaction(function () use ($ownership, $attachmentId, $canDeleteTransactionAttachments) {
+            $attachment = $ownership->attachments()->lockForUpdate()->findOrFail($attachmentId);
+            abort_if($attachment->franchise_transaction_id !== null && ! $canDeleteTransactionAttachments, 403);
+
+            if (! $attachment->delete() || ! Storage::disk($attachment->disk)->delete($attachment->path)) {
+                throw new \RuntimeException('Unable to delete attachment.');
+            }
+        });
+    }
 }

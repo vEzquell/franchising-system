@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\SaveOwnerRequest;
 use App\Models\Franchise;
 use App\Models\FranchiseOwner;
+use App\Models\Liner;
+use App\Models\Vehicle;
 use App\Services\Admin\OwnerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -31,27 +33,40 @@ class OwnerController extends Controller
         $search = trim($filters['search'] ?? '');
 
         return response()->json(['franchises' => Franchise::query()->where('franchise_number', 'like', '%'.$search.'%')
-            ->orderBy('franchise_number')->limit(20)->get(['id', 'franchise_number', 'expiration_date'])]);
+            ->orderBy('franchise_number')->limit(20)->get(['id', 'franchise_number', 'date_issued', 'expiration_date'])]);
     }
 
     public function assignFranchise(Request $request, FranchiseOwner $owner): JsonResponse
     {
         $data = $request->validate([
             'franchise_id' => ['required', 'integer', 'exists:franchises,id'],
-            'started_at' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
-            'expiration_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:started_at'],
+            'started_at' => ['nullable', 'date_format:Y-m-d'],
+            'expiration_date' => ['required', 'date_format:Y-m-d'],
         ]);
         $this->ownerService->assignFranchise($owner, $data);
 
         return response()->json(['message' => 'Franchise assigned.'], 201);
     }
 
+    public function setupOptions(Franchise $franchise): JsonResponse
+    {
+        return response()->json([
+            'current_vehicle' => $franchise->vehicleAssignments()->current()->with('vehicle')
+                ->latest('started_at')->orderByDesc('id')->first()?->vehicle,
+            'vehicles' => Vehicle::query()->orderBy('id')->get(['id', 'make_type', 'plate_number', 'motor_number', 'chassis_number']),
+            'liner_id' => $franchise->liner_id,
+            'liners' => Liner::query()->orderBy('name')->get(['id', 'name', 'route']),
+        ]);
+    }
+
     public function store(SaveOwnerRequest $request): JsonResponse
     {
-        $owner = $this->ownerService->create($request->validated());
+        $data = $request->validated();
+        $hasFranchise = isset($data['franchise_id']);
+        $owner = $hasFranchise ? $this->ownerService->createWithFranchise($data) : $this->ownerService->create($data);
 
         return response()->json([
-            'message' => 'Owner created.',
+            'message' => $hasFranchise ? 'Owner created and franchise linked.' : 'Owner created.',
             'owner' => $owner->only(['id', 'first_name', 'middle_name', 'last_name', 'suffix']),
         ], 201);
     }

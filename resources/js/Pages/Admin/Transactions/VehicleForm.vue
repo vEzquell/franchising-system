@@ -22,6 +22,6 @@ watch(() => vehicle.value.mode, () => Object.assign(vehicle.value, { id: '', mak
             <Field v-model="vehicle.motor_number" name="vehicle.motor_number" label="Motor number" :errors="errors" />
             <Field v-model="vehicle.chassis_number" name="vehicle.chassis_number" label="Chassis number" :errors="errors" />
         </fieldset>
-        <p class="text-xs text-gray-500">Provide at least one plate, motor, or chassis number for a new vehicle.</p>
+        <p v-if="vehicle.mode === 'new'" class="text-xs text-gray-500">Provide at least one plate, motor, or chassis number for a new vehicle.</p>
     </div>
 </template>

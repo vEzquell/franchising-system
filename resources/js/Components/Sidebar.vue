@@ -6,6 +6,8 @@ import { computed, inject } from 'vue'
 import {
     LayoutDashboard,
     FileText,
+    ClipboardList,
+    Tags,
     Users,
     Settings,
     LogOut,
@@ -13,6 +15,7 @@ import {
     ChevronRight,
     ShieldCheck,
     Shield,
+    Route,
 } from 'lucide-vue-next'
 
 // Props
@@ -75,6 +78,18 @@ const menus = computed(() => [
         permission: 'view transactions',
     },
     {
+        name: 'Transaction Types',
+        routeName: 'transaction-types.index',
+        icon: Tags,
+        permission: 'process transactions',
+    },
+    {
+        name: 'Requirements',
+        routeName: 'requirements.index',
+        icon: ClipboardList,
+        permission: 'process transactions',
+    },
+    {
         name: 'Ownership',
         routeName: 'ownerships.index',
         icon: FileText,
@@ -85,6 +100,12 @@ const menus = computed(() => [
         routeName: 'owners.index',
         icon: Users,
         permission: 'view owners',
+    },
+    {
+        name: 'Liners',
+        routeName: 'liners.index',
+        icon: Route,
+        permission: 'view liners',
     },
     {
         name: 'User Management',

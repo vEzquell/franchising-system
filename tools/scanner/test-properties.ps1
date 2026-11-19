@@ -64,8 +64,15 @@ foreach ($code in @('80210006', '8021000D', '80070021')) {
     if ((Get-ScannerDriverMessage $wrappedError) -notlike '*busy or locked*') { throw "Expected an actionable scanner lock message for $code." }
 }
 $rpcFailure = [Runtime.InteropServices.COMException]::new('RPC failed', [Convert]::ToInt32('800706BE', 16))
-if ((Get-ScannerDriverMessage $rpcFailure) -notlike '*lost contact*') { throw 'Expected an actionable driver connection message.' }
-Write-Output 'Passed scanner lock and driver disconnect message checks.'
+if ((Get-ScannerDriverMessage $rpcFailure) -notlike '*lost contact with the scanner service*Epson/TWAIN*') { throw 'Expected an actionable scanner service message.' }
+$offlineFailure = [Runtime.InteropServices.COMException]::new('Scanner offline', [Convert]::ToInt32('80210005', 16))
+if ((Get-ScannerDriverMessage $offlineFailure) -notlike '*USB connection*') { throw 'Expected an actionable offline scanner message.' }
+foreach ($code in @('80210001', '8021000E')) {
+    $driverError = [Runtime.InteropServices.COMException]::new('Raw driver error', [Convert]::ToInt32($code, 16))
+    $wrappedError = [InvalidOperationException]::new('GetResult failed', $driverError)
+    if ((Get-ScannerDriverMessage $wrappedError) -notlike '*driver reported an error*Epson/TWAIN*') { throw "Expected an actionable scanner driver message for $code." }
+}
+Write-Output 'Passed scanner lock, device disconnect, service failure, and driver error message checks.'
 
 $modernItems = [pscustomobject]@{
     Count = 2

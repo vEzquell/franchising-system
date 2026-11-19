@@ -69,6 +69,29 @@ test('initial vehicle assignment is dated and prevents overlapping assignments',
     $this->assertDatabaseCount('franchise_vehicle_assignments', 1);
 });
 
+test('vehicle assignment options return details for the current link only', function () {
+    $vehicle = Vehicle::create(['make_type' => 'Motorcycle', 'plate_number' => 'CUR-001', 'motor_number' => 'M-001', 'chassis_number' => 'C-001']);
+    $oldVehicle = Vehicle::create(['make_type' => 'Old motorcycle', 'plate_number' => 'OLD-001']);
+    $futureVehicle = Vehicle::create(['make_type' => 'Future motorcycle', 'plate_number' => 'FUT-001']);
+    $url = route('franchise.vehicles', $this->franchise);
+    $today = today();
+    $this->franchise->vehicleAssignments()->create(['vehicle_id' => $oldVehicle->id, 'started_at' => $today->copy()->subYear(), 'ended_at' => $today]);
+    $this->franchise->vehicleAssignments()->create(['vehicle_id' => $futureVehicle->id, 'started_at' => $today->copy()->addWeek()]);
+
+    $this->getJson($url)->assertOk()->assertJsonPath('current_assignment', null);
+
+    $assignment = $this->franchise->vehicleAssignments()->create(['vehicle_id' => $vehicle->id, 'started_at' => $today, 'ended_at' => $today->copy()->addWeek()]);
+
+    $this->getJson($url)->assertOk()->assertJsonCount(3, 'vehicles')
+        ->assertJsonPath('current_assignment.id', $assignment->id)
+        ->assertJsonPath('current_assignment.started_at', $today->toJSON())
+        ->assertJsonPath('current_assignment.vehicle.id', $vehicle->id)
+        ->assertJsonPath('current_assignment.vehicle.make_type', 'Motorcycle')
+        ->assertJsonPath('current_assignment.vehicle.plate_number', 'CUR-001')
+        ->assertJsonPath('current_assignment.vehicle.motor_number', 'M-001')
+        ->assertJsonPath('current_assignment.vehicle.chassis_number', 'C-001');
+});
+
 test('renewal snapshots requested details without modifying the assigned vehicle', function () {
     $vehicle = Vehicle::create(['make_type' => 'Motorcycle', 'plate_number' => 'OLD-001']);
     $this->franchise->vehicleAssignments()->create(['vehicle_id' => $vehicle->id, 'started_at' => today()->subYear()]);
@@ -97,7 +120,7 @@ test('substitution can register a replacement without changing active assignment
     expect($transaction->substitution->new_vehicle_id)->toBe($transaction->vehicleDetails->vehicle_id);
     expect($this->franchise->vehicleAssignments()->sole()->vehicle_id)->toBe($vehicle->id);
 
-    auth()->user()->givePermissionTo(\Spatie\Permission\Models\Permission::create(['name' => 'process transactions', 'guard_name' => 'web']));
+    auth()->user()->givePermissionTo(Permission::create(['name' => 'process transactions', 'guard_name' => 'web']));
     $this->patchJson(route('transactions.status.update', $transaction), ['status' => 'approved'])->assertOk();
     expect($this->franchise->fresh()->date_issued->toDateString())->toBe('2026-11-18');
     expect($this->franchise->vehicleAssignments()->where('vehicle_id', $vehicle->id)->sole()->ended_at->toDateString())->toBe('2026-11-17');

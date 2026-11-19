@@ -2,11 +2,12 @@
 import { inject, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { X } from 'lucide-vue-next'
 import Attachments from '../Transactions/Attachments.vue'
-import { combineOwnershipDocuments } from './documents-pdf'
+import DocumentPreview from './DocumentPreview.vue'
+import { formatOwnerName } from '@/lib/formatOwnerName'
 import http from '@/lib/http'
 const open = defineModel('open', { type: Boolean, default: false })
 const props = defineProps({ ownershipId: Number, mode: { type: String, required: true } })
-const emit = defineEmits(['uploaded'])
+const emit = defineEmits(['uploaded', 'deleted'])
 const route = inject('route')
 const dialog = ref(null)
 const ownership = ref(null)
@@ -15,15 +16,13 @@ const errors = ref({})
 const errorMessage = ref('')
 const loading = ref(false)
 const saving = ref(false)
-const previewDialog = ref(null)
-const previewUrl = ref('')
-const previewError = ref('')
-const previewTitle = ref('')
-const previewFilename = ref('')
-const previewMimeType = ref('')
+const canDeleteTransactionAttachments = ref(false)
+const deleteDialog = ref(null)
+const attachmentToDelete = ref(null)
+const deleteError = ref('')
+const documentPreview = ref(null)
 let request
-let previewRequest
-const fullName = owner => owner ? [owner.first_name, owner.middle_name, owner.last_name, owner.suffix].filter(Boolean).join(' ') : 'Unknown owner'
+const fullName = owner => formatOwnerName(owner) || 'Unknown owner'
 async function load() {
     request?.abort()
     const current = new AbortController()
@@ -32,7 +31,10 @@ async function load() {
     errorMessage.value = ''
     try {
         const { data } = await http.get(route('ownerships.show', props.ownershipId), { signal: current.signal })
-        if (!current.signal.aborted) ownership.value = data.ownership
+        if (!current.signal.aborted) {
+            ownership.value = data.ownership
+            canDeleteTransactionAttachments.value = data.can_delete_transaction_attachments
+        }
     } catch (error) { if (!current.signal.aborted) errorMessage.value = 'Unable to load ownership documents.' }
     finally { if (request === current) loading.value = false }
 }
@@ -44,44 +46,11 @@ watch(open, async value => {
         errors.value = {}
         dialog.value.showModal()
         load()
-    } else { request?.abort(); closePreview(); dialog.value.close() }
+    } else { request?.abort(); documentPreview.value?.close(); deleteDialog.value?.close(); dialog.value.close() }
 })
 function close() { if (!saving.value) open.value = false }
-function closePreview() {
-    previewRequest?.abort()
-    previewDialog.value?.close()
-    if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
-    previewUrl.value = ''
-}
-async function previewDocuments(attachment = null) {
-    if (previewDialog.value.open || !ownership.value?.attachments.length) return
-    const { id, attachments } = ownership.value
-    const current = new AbortController()
-    previewRequest = current
-    previewError.value = ''
-    previewTitle.value = attachment ? attachment.document_name || attachment.original_name : 'Combined ownership documents'
-    previewFilename.value = attachment ? attachment.original_name : 'ownership-documents.pdf'
-    previewMimeType.value = attachment ? attachment.mime_type : 'application/pdf'
-    previewDialog.value.showModal()
-
-    try {
-        const readAttachment = async item => {
-            const { data } = await http.get(route('ownerships.attachments.download', [id, item.id]), {
-                responseType: 'arraybuffer',
-                signal: current.signal,
-            })
-            return data
-        }
-        if (attachment && !['application/pdf', 'image/jpeg', 'image/png'].includes(attachment.mime_type)) {
-            throw new Error('This attachment format cannot be previewed.')
-        }
-        const document = attachment
-            ? new Blob([await readAttachment(attachment)], { type: attachment.mime_type })
-            : await combineOwnershipDocuments(attachments, readAttachment, current.signal)
-        if (!current.signal.aborted) previewUrl.value = URL.createObjectURL(document)
-    } catch (error) {
-        if (!current.signal.aborted) previewError.value = attachment && error.isAxiosError ? 'Unable to load this attachment.' : error.message || 'Unable to prepare the preview.'
-    }
+function previewDocuments(attachment = null) {
+    documentPreview.value.show(ownership.value.id, ownership.value.attachments, attachment)
 }
 async function submit() {
     if (saving.value || !files.value.length) return
@@ -107,7 +76,29 @@ async function submit() {
         else errorMessage.value = 'Unable to upload documents. Refresh the page and try again.'
     } finally { saving.value = false }
 }
-onBeforeUnmount(() => { request?.abort(); closePreview() })
+function confirmDelete(attachment) {
+    attachmentToDelete.value = attachment
+    deleteError.value = ''
+    deleteDialog.value.showModal()
+}
+function cancelDelete() { if (!saving.value) deleteDialog.value.close() }
+async function deleteAttachment() {
+    if (saving.value || !attachmentToDelete.value) return
+    const { id } = attachmentToDelete.value
+    saving.value = true
+    deleteError.value = ''
+    try {
+        await http.delete(route('ownerships.attachments.destroy', [ownership.value.id, id]))
+        ownership.value.attachments = ownership.value.attachments.filter(attachment => attachment.id !== id)
+        deleteDialog.value.close()
+        emit('deleted')
+    } catch (error) {
+        deleteError.value = error.response?.status === 404
+            ? 'This attachment is no longer available. Reopen View attachments to refresh the list.'
+            : 'Unable to delete this attachment. Please try again.'
+    } finally { saving.value = false }
+}
+onBeforeUnmount(() => request?.abort())
 </script>
 <template>
     <Teleport to="body">
@@ -128,7 +119,10 @@ onBeforeUnmount(() => { request?.abort(); closePreview() })
                                 <p class="break-words font-medium">{{ attachment.document_name || attachment.original_name }}</p>
                                 <p v-if="attachment.document_type" class="break-words text-xs text-gray-500">{{ attachment.document_type }}</p>
                             </div>
-                            <button type="button" :aria-label="`Preview ${attachment.document_name || attachment.original_name}`" class="shrink-0 rounded-lg border border-[#90CAF9] px-3 py-1.5 font-medium text-[#0D47A1] hover:bg-blue-50" @click="previewDocuments(attachment)">Preview</button>
+                            <div class="flex shrink-0 flex-wrap justify-end gap-2">
+                                <button type="button" :aria-label="`Preview ${attachment.document_name || attachment.original_name}`" class="rounded-lg border border-[#90CAF9] px-3 py-1.5 font-medium text-[#0D47A1] hover:bg-blue-50" @click="previewDocuments(attachment)">Preview</button>
+                                <button v-if="attachment.franchise_transaction_id === null || canDeleteTransactionAttachments" type="button" :aria-label="`Delete ${attachment.document_name || attachment.original_name}`" class="rounded-lg bg-red-50 px-3 py-1.5 font-medium text-red-700 hover:bg-red-100" @click="confirmDelete(attachment)">Delete</button>
+                            </div>
                         </li>
                     </ul>
                     <p v-if="!ownership.attachments.length" class="text-gray-500">No documents uploaded yet.</p>
@@ -139,18 +133,17 @@ onBeforeUnmount(() => { request?.abort(); closePreview() })
                 </form>
             </div>
         </dialog>
-        <dialog ref="previewDialog" aria-labelledby="ownership-preview-title" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-5xl rounded-xl bg-white p-4 shadow-xl backdrop:bg-black/50" @cancel.prevent="closePreview">
-            <div class="mb-3 flex items-center justify-between gap-2">
-                <h2 id="ownership-preview-title" class="min-w-0 break-words font-bold text-[#0D47A1]">{{ previewTitle }}</h2>
-                <button type="button" aria-label="Close attachment preview" class="shrink-0 rounded-lg p-2 hover:bg-blue-50" @click="closePreview"><X class="h-5 w-5" /></button>
-            </div>
-            <template v-if="previewUrl">
-                <a :href="previewUrl" :download="previewFilename" class="mb-2 inline-block text-sm text-[#0D47A1] underline">{{ previewMimeType === 'application/pdf' ? 'Download PDF' : 'Download image' }}</a>
-                <iframe v-if="previewMimeType === 'application/pdf'" :src="previewUrl" :title="previewTitle" class="h-[min(70dvh,52rem)] w-full rounded-lg border border-blue-100"></iframe>
-                <img v-else :src="previewUrl" :alt="previewTitle" class="mx-auto max-h-[70dvh] max-w-full object-contain" />
-            </template>
-            <p v-else-if="previewError" role="alert" class="text-sm text-red-600">{{ previewError }}</p>
-            <p v-else role="status" class="text-sm text-gray-500">Preparing preview...</p>
+        <dialog ref="deleteDialog" aria-labelledby="attachment-delete-title" aria-describedby="attachment-delete-description" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-md rounded-xl bg-white p-6 shadow-xl backdrop:bg-black/50" @cancel.prevent="cancelDelete">
+            <form @submit.prevent="deleteAttachment">
+                <h2 id="attachment-delete-title" class="mb-3 text-lg font-bold text-[#0D47A1]">Delete attachment</h2>
+                <p id="attachment-delete-description" class="break-words text-sm text-gray-700">Permanently delete “{{ attachmentToDelete?.document_name || attachmentToDelete?.original_name }}”<template v-if="attachmentToDelete?.franchise_transaction_id"> from this ownership record and its linked transaction</template>?</p>
+                <p v-if="deleteError" role="alert" class="mt-3 text-sm text-red-600">{{ deleteError }}</p>
+                <div class="mt-5 flex justify-end gap-3">
+                    <button type="button" autofocus :disabled="saving" class="rounded-lg border px-4 py-2 text-sm disabled:opacity-50" @click="cancelDelete">Cancel</button>
+                    <button type="submit" :disabled="saving" class="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50">{{ saving ? 'Deleting...' : 'Delete attachment' }}</button>
+                </div>
+            </form>
         </dialog>
+        <DocumentPreview ref="documentPreview" />
     </Teleport>
 </template>

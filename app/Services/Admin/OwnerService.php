@@ -8,7 +8,9 @@ use App\Models\FranchiseOwnership;
 use App\Models\FranchiseTransfer;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 class OwnerService
@@ -26,6 +28,7 @@ class OwnerService
         }
 
         $previous->update(['ended_at' => $date]);
+
         return $franchise->ownerships()->create(['franchise_owner_id' => $transfer->new_owner_id, 'started_at' => $date]);
     }
 
@@ -48,24 +51,68 @@ class OwnerService
     {
         return DB::transaction(function () use ($owner, $data) {
             $franchise = Franchise::query()->lockForUpdate()->findOrFail($data['franchise_id']);
+            $startedAt = $franchise->date_issued?->toDateString() ?? $data['started_at'] ?? null;
+            if ($startedAt === null || $startedAt > today()->toDateString()) {
+                throw ValidationException::withMessages(['started_at' => 'The ownership start date must be today or earlier.']);
+            }
+
+            if ($data['expiration_date'] < $startedAt) {
+                throw ValidationException::withMessages(['expiration_date' => 'The expiration date must be on or after the ownership start date.']);
+            }
+
             $overlaps = $franchise->ownerships()->where(fn (Builder $query) => $query
-                ->whereNull('ended_at')->orWhereDate('ended_at', '>', $data['started_at']))->exists();
+                ->whereNull('ended_at')->orWhereDate('ended_at', '>', $startedAt))->exists();
             if ($overlaps) {
                 throw ValidationException::withMessages(['franchise_id' => 'This franchise already has an overlapping ownership. Use an ownership transfer to change its owner.']);
             }
 
-            if ($franchise->date_issued && $data['expiration_date'] < $franchise->date_issued->toDateString()) {
-                throw ValidationException::withMessages(['expiration_date' => 'The expiration date must be on or after the franchise issue date.']);
-            }
-            $franchise->update(['expiration_date' => $data['expiration_date']]);
+            $franchise->update([
+                'date_issued' => $startedAt,
+                'expiration_date' => $data['expiration_date'],
+            ]);
 
-            return $owner->ownerships()->create(['franchise_id' => $franchise->id, 'started_at' => $data['started_at']]);
+            return $owner->ownerships()->create(['franchise_id' => $franchise->id, 'started_at' => $startedAt]);
         });
     }
 
     public function create(array $data): FranchiseOwner
     {
         return FranchiseOwner::create($data);
+    }
+
+    public function createWithFranchise(array $data): FranchiseOwner
+    {
+        $storedPaths = [];
+        try {
+            return DB::transaction(function () use ($data, &$storedPaths): FranchiseOwner {
+                $owner = $this->create(Arr::only($data, ['first_name', 'middle_name', 'last_name', 'suffix', 'address', 'contact_number']));
+                $ownership = $this->assignFranchise($owner, $data);
+                $franchise = $ownership->franchise;
+
+                if (isset($data['vehicle'])) {
+                    app(VehicleService::class)->assign($franchise, [
+                        'vehicle' => $data['vehicle'],
+                        'started_at' => $ownership->started_at->toDateString(),
+                    ]);
+                }
+
+                if (isset($data['liner_id'])) {
+                    $franchise->liner()->associate($data['liner_id']);
+                    $franchise->save();
+                }
+
+                if (isset($data['attachments'])) {
+                    app(AttachmentService::class)->store($ownership->attachments(), $data['attachments'], 'ownership-attachments/'.$ownership->id, $storedPaths);
+                }
+
+                return $owner;
+            });
+        } catch (\Throwable $exception) {
+            if ($storedPaths) {
+                Storage::disk('local')->delete($storedPaths);
+            }
+            throw $exception;
+        }
     }
 
     public function update(FranchiseOwner $owner, array $data): FranchiseOwner

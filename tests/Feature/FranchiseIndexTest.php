@@ -2,6 +2,7 @@
 
 use App\Models\Franchise;
 use App\Models\FranchiseOwner;
+use App\Models\Liner;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -60,6 +61,51 @@ test('franchise filters reject invalid input', function () {
         ->assertUnprocessable()->assertJsonValidationErrors(['status', 'search', 'page']);
 });
 
+test('franchise status and filters account for expiration after the last valid day in Manila', function () {
+    $this->travelTo(now()->setDate(2026, 11, 19)->setTime(15, 59));
+    foreach ([
+        ['F-001', 'active', '2026-08-22'],
+        ['F-002', 'active', '2026-11-19'],
+        ['F-003', 'active', '2027-01-01'],
+        ['F-004', 'active', null],
+        ['F-005', 'suspended', '2026-08-22'],
+        ['F-006', 'unavailable', '2026-08-22'],
+        ['F-007', 'expired', null],
+    ] as [$number, $status, $expirationDate]) {
+        Franchise::create(['franchise_number' => $number, 'status' => $status, 'expiration_date' => $expirationDate]);
+    }
+
+    $this->actingAs($this->viewer)->getJson(route('franchise.index'))->assertOk()
+        ->assertJsonPath('franchises.data.0.status', 'expired')
+        ->assertJsonPath('franchises.data.0.recorded_status', 'active')
+        ->assertJsonPath('franchises.data.1.status', 'active')
+        ->assertJsonPath('franchises.data.2.status', 'active')
+        ->assertJsonPath('franchises.data.3.status', 'active')
+        ->assertJsonPath('franchises.data.4.status', 'suspended')
+        ->assertJsonPath('franchises.data.5.status', 'unavailable');
+    $this->getJson(route('franchise.index', ['status' => 'active']))->assertOk()
+        ->assertJsonPath('franchises.total', 3);
+
+    $this->travel(1)->minute();
+
+    $this->getJson(route('franchise.index', ['status' => 'expired']))->assertOk()
+        ->assertJsonPath('franchises.total', 3)
+        ->assertJsonPath('franchises.data.0.franchise_number', 'F-001')
+        ->assertJsonPath('franchises.data.1.franchise_number', 'F-002')
+        ->assertJsonPath('franchises.data.2.franchise_number', 'F-007');
+    $this->getJson(route('franchise.index', ['status' => 'active']))->assertOk()
+        ->assertJsonPath('franchises.total', 2);
+
+    $franchise = Franchise::where('franchise_number', 'F-001')->sole();
+    $this->postJson(route('franchise.update', $franchise), [
+        'franchise_number' => $franchise->franchise_number,
+        'status' => 'active',
+        'expiration_date' => '2027-01-01',
+    ])->assertOk();
+    $this->getJson(route('franchise.index', ['search' => 'F-001', 'status' => 'active']))->assertOk()
+        ->assertJsonPath('franchises.data.0.status', 'active');
+});
+
 test('page viewers can edit franchise details with validated dates and unique numbers', function () {
     $franchise = Franchise::create(['franchise_number' => 'F-EDIT']);
     Franchise::create(['franchise_number' => 'F-TAKEN']);
@@ -93,6 +139,66 @@ test('creating franchises requires page access', function () {
     $this->postJson(route('franchise.store'), [])->assertUnauthorized();
     $other = User::create(['name' => 'Other', 'username' => 'no-create-access', 'password' => 'password']);
     $this->actingAs($other)->postJson(route('franchise.store'), [])->assertForbidden();
+});
+
+test('franchise staff can link, change, and clear a liner', function () {
+    $franchise = Franchise::create(['franchise_number' => 'F-101']);
+    $otherFranchise = Franchise::create(['franchise_number' => 'F-102']);
+    $east = Liner::create(['name' => 'East Liner', 'route' => 'East Terminal']);
+    $central = Liner::create(['name' => 'Central Liner', 'route' => 'Central Terminal']);
+    $options = route('franchise.liner', $franchise);
+    $update = route('franchise.liner.update', $franchise);
+
+    $this->actingAs($this->viewer)->getJson($options)
+        ->assertOk()
+        ->assertJsonPath('liner_id', null)
+        ->assertJsonCount(2, 'liners')
+        ->assertJsonPath('liners.0.route', 'Central Terminal');
+
+    $this->patchJson($update, ['liner_id' => $central->id])
+        ->assertOk()->assertJsonPath('message', 'Liner linked.');
+    $this->getJson($options)->assertOk()->assertJsonPath('liner_id', $central->id);
+    $this->getJson(route('franchise.index'))
+        ->assertOk()
+        ->assertJsonPath('franchises.data.0.liner.name', 'Central Liner')
+        ->assertJsonPath('franchises.data.0.liner.route', 'Central Terminal')
+        ->assertJsonPath('franchises.data.1.liner', null);
+    $this->assertDatabaseHas('franchises', ['id' => $otherFranchise->id, 'liner_id' => null]);
+
+    $this->patchJson($update, ['liner_id' => $east->id])->assertOk();
+    $this->assertDatabaseHas('franchises', ['id' => $franchise->id, 'liner_id' => $east->id]);
+
+    $this->patchJson($update, ['liner_id' => null])
+        ->assertOk()->assertJsonPath('message', 'Liner unlinked.');
+    $this->assertDatabaseHas('franchises', ['id' => $franchise->id, 'liner_id' => null]);
+});
+
+test('invalid or missing liner IDs do not overwrite a franchise link', function () {
+    $franchise = Franchise::create(['franchise_number' => 'F-101']);
+    $liner = Liner::create(['name' => 'Central Liner', 'route' => 'Central Terminal']);
+    $franchise->liner()->associate($liner)->save();
+    $update = route('franchise.liner.update', $franchise);
+
+    $this->actingAs($this->viewer)->patchJson($update, ['liner_id' => 999999])
+        ->assertUnprocessable()->assertJsonValidationErrors('liner_id');
+    $this->patchJson($update, ['liner_id' => 'Central Liner'])
+        ->assertUnprocessable()->assertJsonValidationErrors('liner_id');
+    $this->patchJson($update, [])
+        ->assertUnprocessable()->assertJsonValidationErrors('liner_id');
+
+    $this->assertDatabaseHas('franchises', ['id' => $franchise->id, 'liner_id' => $liner->id]);
+});
+
+test('liner assignment options and changes require franchise page access', function () {
+    $franchise = Franchise::create(['franchise_number' => 'F-101']);
+    $options = route('franchise.liner', $franchise);
+    $update = route('franchise.liner.update', $franchise);
+    $other = User::create(['name' => 'Other', 'username' => 'no-liner-assignment', 'password' => 'password']);
+
+    $this->getJson($options)->assertUnauthorized();
+    $this->patchJson($update, ['liner_id' => null])->assertUnauthorized();
+    $this->actingAs($other)->getJson($options)->assertForbidden();
+    $this->patchJson($update, ['liner_id' => null])->assertForbidden();
 });
 
 test('transaction history is scoped paginated and protected by page permission', function () {
