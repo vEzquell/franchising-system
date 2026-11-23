@@ -247,7 +247,7 @@ function closeView() {
                 <p v-if="saveError" role="alert" class="text-sm text-red-600">{{ saveError }}</p>
                 <div>
                     <label for="edit-franchise-number" class="mb-2 block text-sm font-medium text-gray-700">Franchise number</label>
-                    <input id="edit-franchise-number" v-model="editForm.franchise_number" required maxlength="50" :disabled="saving" :aria-invalid="!!errors.franchise_number" class="w-full rounded-lg border border-[#90CAF9] px-3 py-2 text-sm" />
+                    <input v-uppercase id="edit-franchise-number" v-model="editForm.franchise_number" required maxlength="50" :disabled="saving" :aria-invalid="!!errors.franchise_number" class="w-full rounded-lg border border-[#90CAF9] px-3 py-2 text-sm" />
                     <p v-if="errors.franchise_number" role="alert" class="mt-1 text-sm text-red-600">{{ errors.franchise_number }}</p>
                 </div>
                 <div>

@@ -5,6 +5,7 @@ use App\Models\Franchise;
 use App\Models\FranchiseOwner;
 use App\Models\User;
 use App\Models\Vehicle;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -67,6 +68,24 @@ test('initial vehicle assignment is dated and prevents overlapping assignments',
     $this->postJson(route('franchise.vehicles.store', $this->franchise), ['vehicle' => ['mode' => 'new', 'make_type' => 'Motorcycle', 'plate_number' => 'ROLLBACK-NEW'], 'started_at' => today()->toDateString()])->assertUnprocessable();
     $this->assertDatabaseCount('vehicles', 1);
     $this->assertDatabaseCount('franchise_vehicle_assignments', 1);
+});
+
+test('new vehicles can share a plate only when their make or type differs', function () {
+    Vehicle::create(['make_type' => 'Motorcycle', 'plate_number' => 'SHARED-001']);
+    $vehicle = ['mode' => 'new', 'make_type' => 'Tricycle', 'plate_number' => 'SHARED-001'];
+    $data = ['vehicle' => $vehicle, 'started_at' => today()->toDateString()];
+
+    $this->postJson(route('franchise.vehicles.store', $this->franchise), $data)->assertCreated();
+    $this->assertDatabaseHas('vehicles', ['make_type' => 'Tricycle', 'plate_number' => 'SHARED-001']);
+
+    $other = Franchise::create(['franchise_number' => 'F-SHARED-PLATE']);
+    $this->postJson(route('franchise.vehicles.store', $other), $data)
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['vehicle.plate_number' => 'A vehicle with this make/type and plate number already exists.']);
+
+    $this->assertDatabaseCount('vehicles', 2);
+    expect(fn () => Vehicle::create(['make_type' => 'Tricycle', 'plate_number' => 'SHARED-001']))
+        ->toThrow(UniqueConstraintViolationException::class);
 });
 
 test('vehicle assignment options return details for the current link only', function () {

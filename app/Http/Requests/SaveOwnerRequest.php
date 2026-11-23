@@ -13,7 +13,7 @@ class SaveOwnerRequest extends FormRequest
     {
         $user = $this->user();
 
-        return $user->can('view owners') && (! $this->routeIs('owners.store') || (
+        return $user->can('view owners') && (! $this->routeIs('owners.store', 'owners.franchises.store') || (
             (! $this->hasAny(['vehicle', 'liner_id']) || $user->can('view franchise'))
             && (! $this->has('attachments') || $user->can('view ownerships'))
         ));
@@ -31,6 +31,10 @@ class SaveOwnerRequest extends FormRequest
 
     public function rules(): array
     {
+        if ($this->routeIs('owners.franchises.store')) {
+            return $this->franchiseRules(required: true);
+        }
+
         return [
             'first_name' => ['required', 'string', 'max:50'],
             'last_name' => ['required', 'string', 'max:50'],
@@ -42,7 +46,7 @@ class SaveOwnerRequest extends FormRequest
         ];
     }
 
-    private function franchiseRules(): array
+    private function franchiseRules(bool $required = false): array
     {
         $hasFranchise = $this->filled('franchise_id');
         $attachmentRules = $this->ownershipAttachmentRules(required: false);
@@ -50,9 +54,9 @@ class SaveOwnerRequest extends FormRequest
         return [
             ...$this->vehicleRules(),
             ...$attachmentRules,
-            'franchise_id' => ['sometimes', 'required', 'integer', 'exists:franchises,id'],
+            'franchise_id' => [...($required ? [] : ['sometimes']), 'required', 'integer', 'exists:franchises,id'],
             'started_at' => [Rule::prohibitedIf(! $hasFranchise), 'nullable', 'date_format:Y-m-d'],
-            'expiration_date' => [Rule::prohibitedIf(! $hasFranchise), Rule::requiredIf($hasFranchise), 'nullable', 'date_format:Y-m-d'],
+            'expiration_date' => [Rule::prohibitedIf(! $required && ! $hasFranchise), Rule::requiredIf($required || $hasFranchise), 'nullable', 'date_format:Y-m-d'],
             'liner_id' => [Rule::prohibitedIf(! $hasFranchise), 'sometimes', 'required', 'integer', 'exists:liners,id'],
             'vehicle' => [Rule::prohibitedIf(! $hasFranchise), 'sometimes', 'required', 'array'],
             'attachments' => [...$attachmentRules['attachments'], Rule::prohibitedIf(! $hasFranchise)],

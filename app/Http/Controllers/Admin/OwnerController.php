@@ -36,14 +36,22 @@ class OwnerController extends Controller
             ->orderBy('franchise_number')->limit(20)->get(['id', 'franchise_number', 'date_issued', 'expiration_date'])]);
     }
 
-    public function assignFranchise(Request $request, FranchiseOwner $owner): JsonResponse
+    public function nameMatches(Request $request): JsonResponse
     {
-        $data = $request->validate([
-            'franchise_id' => ['required', 'integer', 'exists:franchises,id'],
-            'started_at' => ['nullable', 'date_format:Y-m-d'],
-            'expiration_date' => ['required', 'date_format:Y-m-d'],
+        $names = $request->validate([
+            'first_name' => ['nullable', 'string', 'max:50'],
+            'last_name' => ['nullable', 'string', 'max:50'],
         ]);
-        $this->ownerService->assignFranchise($owner, $data);
+
+        return response()->json(['owners' => $this->ownerService->findNameMatches(
+            trim($names['first_name'] ?? ''),
+            trim($names['last_name'] ?? ''),
+        )]);
+    }
+
+    public function assignFranchise(SaveOwnerRequest $request, FranchiseOwner $owner): JsonResponse
+    {
+        $this->ownerService->assignFranchise($owner, $request->validated());
 
         return response()->json(['message' => 'Franchise assigned.'], 201);
     }

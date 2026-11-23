@@ -17,6 +17,7 @@ class AttachmentService
             $storedPaths[] = $path;
             $attachments->create([
                 ...($ownershipId !== null ? ['franchise_ownership_id' => $ownershipId] : []),
+                ...(isset($upload['requirement_id']) ? ['requirement_id' => $upload['requirement_id']] : []),
                 'document_name' => $upload['document_name'], 'document_type' => $upload['document_type'] ?? 'PDF', 'original_name' => mb_substr(basename($file->getClientOriginalName()), 0, 255),
                 'disk' => 'local', 'path' => $path, 'mime_type' => $file->getMimeType(), 'size' => $file->getSize(),
             ]);

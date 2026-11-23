@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\FileFranchiseTransactionsRequest;
 use App\Http\Requests\StoreFranchiseTransactionRequest;
 use App\Models\Attachment;
 use App\Models\Franchise;
@@ -24,8 +25,14 @@ class FranchiseTransactionController extends Controller
 {
     public function show(Request $request, FranchiseTransaction $transaction): JsonResponse
     {
+        $transaction->load([
+            'franchise', 'type:code,name', 'creator:id,name', 'processor:id,name', 'approver:id,name',
+            'vehicleDetails.vehicle', 'attachments', 'renewal.owner', 'substitution.previousVehicle',
+            'substitution.newVehicle', 'amendment.changes', 'amendment.transfer',
+        ]);
+
         return response()->json([
-            'transaction' => $transaction->load(['franchise', 'type:code,name', 'vehicleDetails.vehicle', 'attachments', 'renewal.owner', 'substitution.previousVehicle', 'substitution.newVehicle', 'amendment.changes', 'amendment.transfer']),
+            'transaction' => $transaction,
             'next_statuses' => $request->user()->can('process transactions') ? $transaction->nextStatuses() : [],
         ]);
     }
@@ -58,11 +65,13 @@ class FranchiseTransactionController extends Controller
         $data = [
             'transactions' => $service->paginate($search, $status),
             'filters' => ['search' => $search, 'status' => $status],
-            'transactionTypes' => TransactionType::query()->active()->orderBy('name')->get(['code', 'name'])
+            'transactionTypes' => TransactionType::query()->active()->with('requirements:id,transaction_type,name,description')
+                ->orderBy('name')->get(['code', 'name'])
                 ->map(fn (TransactionType $type) => [
                     'value' => $type->code,
                     'label' => $type->name,
                     'workflow' => TransactionType::hasBuiltInWorkflow($type->code) ? $type->code : 'general',
+                    'requirements' => $type->requirements->sortBy('name')->values(),
                 ]),
         ];
 
@@ -86,9 +95,17 @@ class FranchiseTransactionController extends Controller
     public function storeSelected(StoreFranchiseTransactionRequest $request, FranchiseTransactionService $service): JsonResponse
     {
         $data = $request->validated();
-        $service->create(Franchise::findOrFail($data['franchise_id']), $data);
+        $service->create(Franchise::findOrFail($data['franchise_id']), $data, $request->user());
 
         return response()->json(['message' => 'Transaction added.'], 201);
+    }
+
+    public function file(FileFranchiseTransactionsRequest $request, FranchiseTransactionService $service): JsonResponse
+    {
+        $data = $request->validated();
+        $service->fileRequirements((int) $data['franchise_id'], $data['filings'], $request->user());
+
+        return response()->json(['count' => count($data['filings'])], 201);
     }
 
     public function options(Franchise $franchise): JsonResponse
@@ -105,7 +122,7 @@ class FranchiseTransactionController extends Controller
 
     public function store(StoreFranchiseTransactionRequest $request, Franchise $franchise, FranchiseTransactionService $service): JsonResponse
     {
-        $service->create($franchise, $request->validated());
+        $service->create($franchise, $request->validated(), $request->user());
 
         return response()->json(['message' => 'Transaction added.'], 201);
     }

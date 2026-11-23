@@ -3,16 +3,16 @@ import { computed, inject, nextTick, onBeforeUnmount, reactive, ref, watch } fro
 import { usePage } from '@inertiajs/vue3'
 import { Users, X } from 'lucide-vue-next'
 import http from '@/lib/http'
+import { formatOwnerName } from '@/lib/formatOwnerName'
 import Attachments from '../Transactions/Attachments.vue'
 import FranchiseSelect from '../Transactions/FranchiseSelect.vue'
 import VehicleForm from '../Transactions/VehicleForm.vue'
 
 const open = defineModel('open', { type: Boolean, default: false })
-const props = defineProps({ owner: { type: Object, default: null }, withFranchise: Boolean })
+const props = defineProps({ owner: { type: Object, default: null }, withFranchise: Boolean, assignOnly: Boolean })
 const emit = defineEmits(['saved'])
 const route = inject('route')
 const dialog = ref(null)
-const firstInput = ref(null)
 const processing = ref(false)
 const errors = ref({})
 const errorMessage = ref('')
@@ -25,20 +25,22 @@ const fields = [
     { key: 'contact_number', label: 'Contact number', max: 20, type: 'tel' },
 ]
 const form = reactive({ first_name: '', middle_name: '', last_name: '', suffix: '', address: '', contact_number: '' })
-const title = computed(() => props.owner ? 'Edit Owner' : 'Add Owner')
+const title = computed(() => props.assignOnly ? 'Assign Franchise' : props.owner ? 'Edit Owner' : 'Add Owner')
 const page = usePage()
 const can = permission => page.props.auth?.isSuperAdmin || page.props.auth?.permissions?.includes(permission)
 const canLinkVehicleAndRoute = computed(() => can('view franchise'))
 const canAddAttachments = computed(() => can('view ownerships'))
-const wizard = computed(() => props.withFranchise && !props.owner)
+const wizard = computed(() => props.assignOnly || (props.withFranchise && !props.owner))
 const steps = computed(() => [
-    { id: 'owner', label: 'Owner' },
+    ...(props.assignOnly ? [] : [{ id: 'owner', label: 'Owner' }]),
     ...(wizard.value ? [{ id: 'franchise', label: 'Franchise' }] : []),
     ...(wizard.value && canLinkVehicleAndRoute.value ? [{ id: 'vehicle', label: 'Vehicle & route' }] : []),
     ...(wizard.value && canAddAttachments.value ? [{ id: 'attachments', label: 'Attachments' }] : []),
 ])
 const step = ref(0)
 const currentStep = computed(() => steps.value[step.value]?.id)
+const nameMatches = ref([])
+const nameMatchError = ref(false)
 const isLastStep = computed(() => step.value === steps.value.length - 1)
 const franchise = ref(null)
 const issueDate = computed(() => franchise.value?.date_issued?.slice(0, 10) ?? '')
@@ -55,6 +57,29 @@ const files = ref([])
 const loadingOptions = ref(false)
 const optionsError = ref(false)
 let optionsRequest
+
+watch(() => open.value && !props.owner && currentStep.value === 'owner'
+    ? { first_name: form.first_name.trim(), last_name: form.last_name.trim() }
+    : null, (names, _, onCleanup) => {
+    nameMatches.value = []
+    nameMatchError.value = false
+    if (!names || Math.max([...names.first_name].length, [...names.last_name].length) < 2) return
+
+    const request = new AbortController()
+    const debounce = setTimeout(async () => {
+        try {
+            const { data } = await http.get(route('owners.name-matches'), { params: names, signal: request.signal })
+            if (!request.signal.aborted) nameMatches.value = data.owners
+        } catch {
+            if (!request.signal.aborted) nameMatchError.value = true
+        }
+    }, 300)
+
+    onCleanup(() => {
+        clearTimeout(debounce)
+        request.abort()
+    })
+})
 
 async function loadOptions() {
     optionsRequest?.abort()
@@ -104,7 +129,7 @@ watch(open, async value => {
         errors.value = {}
         errorMessage.value = ''
         if (!dialog.value.open) dialog.value.showModal()
-        firstInput.value?.[0]?.focus()
+        focusStep()
     } else {
         optionsRequest?.abort()
         dialog.value.close()
@@ -115,8 +140,11 @@ function close() {
 }
 async function goToStep(index) {
     step.value = index
+    await focusStep()
+}
+async function focusStep() {
     await nextTick()
-    dialog.value.querySelector('[data-owner-step] input:not([disabled]), [data-owner-step] select:not([disabled]), [data-owner-step] button:not([disabled])')?.focus()
+    dialog.value?.querySelector('[data-owner-step] input:not(:disabled), [data-owner-step] select:not(:disabled), [data-owner-step] button:not(:disabled)')?.focus()
 }
 
 function submit() {
@@ -147,7 +175,7 @@ async function save(withAssignment) {
             const addValue = (key, value) => {
                 if (value !== '' && value !== null && value !== undefined) payload.append(key, value)
             }
-            Object.entries(form).forEach(([key, value]) => addValue(key, value))
+            if (!props.assignOnly) Object.entries(form).forEach(([key, value]) => addValue(key, value))
             payload.append('franchise_id', franchise.value.id)
             addValue('started_at', startedAt.value)
             payload.append('expiration_date', expirationDate.value)
@@ -162,7 +190,9 @@ async function save(withAssignment) {
                 payload.append(`attachments[${index}][document_name]`, item.document_name)
             })
         }
-        const { data } = await http.post(props.owner ? route('owners.update', props.owner.id) : route('owners.store'), payload)
+        const url = props.assignOnly ? route('owners.franchises.store', props.owner.id)
+            : props.owner ? route('owners.update', props.owner.id) : route('owners.store')
+        const { data } = await http.post(url, payload)
         open.value = false
         emit('saved', data.message, data.owner)
     } catch (error) {
@@ -178,7 +208,8 @@ async function save(withAssignment) {
                 else errorMessage.value = 'Check the information you entered and try again.'
             }
         } else errorMessage.value = error.response?.status === 403 ? 'You do not have permission to manage owners.'
-            : [401, 419].includes(error.response?.status) ? 'Your session ended. Refresh the page and sign in again.' : 'Unable to save the owner. Please try again.'
+            : [401, 419].includes(error.response?.status) ? 'Your session ended. Refresh the page and sign in again.'
+            : props.assignOnly ? 'Unable to assign the franchise. Please try again.' : 'Unable to save the owner. Please try again.'
     } finally {
         processing.value = false
     }
@@ -196,17 +227,29 @@ onBeforeUnmount(() => optionsRequest?.abort())
                 <li v-for="(item, index) in steps" :key="item.id" :aria-current="step === index ? 'step' : undefined" class="rounded-lg px-2.5 py-1.5" :class="step === index ? 'bg-[#0D47A1] text-white' : 'text-slate-600'">{{ index + 1 }}. {{ item.label }}</li>
             </ol>
             <form class="space-y-4 p-5" @submit.prevent="submit">
+                <p v-if="assignOnly" class="text-sm text-gray-600">Owner: <strong>{{ formatOwnerName(owner) }}</strong></p>
                 <p v-if="errorMessage" role="alert" class="text-sm text-red-600">{{ errorMessage }}</p>
                 <fieldset data-owner-step :disabled="processing" class="space-y-4">
                     <template v-if="currentStep === 'owner'">
                         <div v-for="field in fields" :key="field.key">
                             <label :for="`owner-${field.key}`" class="mb-2 block text-sm font-medium text-gray-700">{{ field.label }} <span v-if="field.required" aria-hidden="true" class="text-red-600">*</span></label>
-                            <input :id="`owner-${field.key}`" ref="firstInput" v-model="form[field.key]" :type="field.type ?? 'text'" :required="field.required" :maxlength="field.max" :aria-invalid="!!errors[field.key]" :aria-describedby="`owner-${field.key}-error`" class="w-full rounded-lg border border-[#90CAF9] px-3 py-2.5 text-sm focus:outline-[#2196F3]" />
+                            <input v-uppercase :id="`owner-${field.key}`" v-model="form[field.key]" :type="field.type ?? 'text'" :required="field.required" :maxlength="field.max" :aria-invalid="!!errors[field.key]" :aria-describedby="`owner-${field.key}-error`" class="w-full rounded-lg border border-[#90CAF9] px-3 py-2.5 text-sm focus:outline-[#2196F3]" />
                             <p :id="`owner-${field.key}-error`" role="alert" class="mt-1 text-sm text-red-600">{{ errors[field.key] }}</p>
+                            <div v-if="field.key === 'last_name' && !owner" aria-live="polite">
+                                <div v-if="nameMatches.length" class="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                                    <p class="font-semibold">Possible existing owners</p>
+                                    <ul class="mt-1 list-disc space-y-1 pl-5">
+                                        <li v-for="match in nameMatches" :key="match.id">
+                                            {{ formatOwnerName(match) }}<span v-if="match.address" class="block text-xs">{{ match.address }}</span>
+                                        </li>
+                                    </ul>
+                                </div>
+                                <p v-else-if="nameMatchError" class="mt-2 text-xs text-gray-600">Unable to check for existing owners right now.</p>
+                            </div>
                         </div>
                     </template>
                     <template v-else-if="currentStep === 'franchise'">
-                        <FranchiseSelect v-model="franchise" search-route="owners.franchises" :error="errors.franchise_id" />
+                        <FranchiseSelect v-if="open" v-model="franchise" search-route="owners.franchises" :error="errors.franchise_id" />
                         <div v-if="franchise" class="grid gap-3 sm:grid-cols-2">
                             <div>
                                 <label for="setup-owner-start" class="mb-2 block text-sm font-medium">{{ issueDate ? 'Ownership start date' : 'Franchise issue date' }}</label>
@@ -220,6 +263,7 @@ onBeforeUnmount(() => optionsRequest?.abort())
                                 <p v-if="errors.expiration_date" role="alert" class="mt-1 text-sm text-red-600">{{ errors.expiration_date }}</p>
                             </div>
                         </div>
+                        <p v-if="assignOnly" class="text-xs text-gray-500">Assign an unassigned franchise here. Use an ownership transfer for franchises with an existing owner.</p>
                     </template>
                     <template v-else-if="currentStep === 'vehicle'">
                         <p v-if="loadingOptions" role="status" class="text-sm text-gray-600">Loading vehicle and route options...</p>
@@ -253,8 +297,8 @@ onBeforeUnmount(() => optionsRequest?.abort())
                 <div class="flex flex-wrap justify-end gap-3 border-t border-[#E3F2FD] pt-5">
                     <button type="button" :disabled="processing" class="rounded-lg border border-gray-200 px-4 py-2.5 text-sm text-gray-600 disabled:opacity-50" @click="close">Cancel</button>
                     <button v-if="step > 0" type="button" :disabled="processing" class="rounded-lg border border-gray-200 px-4 py-2.5 text-sm text-gray-600 disabled:opacity-50" @click="goToStep(step - 1)">Back</button>
-                    <button v-else-if="wizard" type="button" :disabled="processing" class="rounded-lg border border-blue-200 px-4 py-2.5 text-sm text-[#0D47A1] disabled:opacity-50" @click="saveOwnerOnly">Save owner only</button>
-                    <button type="submit" :disabled="processing || (currentStep === 'franchise' && !franchise) || (currentStep === 'vehicle' && (loadingOptions || optionsError))" class="rounded-lg bg-[#2196F3] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0D47A1] disabled:opacity-50">{{ processing ? 'Saving...' : isLastStep ? 'Save Owner' : 'Next' }}</button>
+                    <button v-else-if="wizard && !assignOnly" type="button" :disabled="processing" class="rounded-lg border border-blue-200 px-4 py-2.5 text-sm text-[#0D47A1] disabled:opacity-50" @click="saveOwnerOnly">Save owner only</button>
+                    <button type="submit" :disabled="processing || (currentStep === 'franchise' && !franchise) || (currentStep === 'vehicle' && (loadingOptions || optionsError))" class="rounded-lg bg-[#2196F3] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0D47A1] disabled:opacity-50">{{ processing ? 'Saving...' : isLastStep ? (assignOnly ? 'Assign Franchise' : 'Save Owner') : 'Next' }}</button>
                 </div>
             </form>
         </dialog>

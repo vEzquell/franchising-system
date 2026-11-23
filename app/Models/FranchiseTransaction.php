@@ -16,8 +16,11 @@ class FranchiseTransaction extends Model
         'date_filed',
         'certificate_issue_date',
         'approved_at',
+        'created_by',
         'processed_by',
+        'approved_by',
         'remarks',
+        'requirements_only',
     ];
 
     protected function casts(): array
@@ -26,16 +29,19 @@ class FranchiseTransaction extends Model
             'date_filed' => 'date',
             'certificate_issue_date' => 'date:Y-m-d',
             'approved_at' => 'datetime',
+            'requirements_only' => 'boolean',
         ];
     }
 
     public function nextStatuses(): array
     {
-        return match ($this->status) {
+        $statuses = match ($this->status) {
             'pending' => ['under_review', 'approved', 'rejected', 'cancelled'],
             'under_review' => ['approved', 'rejected', 'cancelled'],
             default => [],
         };
+
+        return $this->requirements_only ? array_values(array_diff($statuses, ['approved'])) : $statuses;
     }
 
     public function attachmentOwnershipId(): ?int
@@ -81,9 +87,19 @@ class FranchiseTransaction extends Model
         return $this->belongsTo(TransactionType::class, 'transaction_type');
     }
 
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
     public function processor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'processed_by');
+    }
+
+    public function approver(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
     }
 
     public function renewal(): HasOne

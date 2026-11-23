@@ -2,9 +2,12 @@
 
 use App\Models\Franchise;
 use App\Models\FranchiseOwner;
+use App\Models\Requirement;
 use App\Models\User;
 use App\Models\Vehicle;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
 use Spatie\Permission\Models\Permission;
 
@@ -51,37 +54,127 @@ test('final standalone submission validates the franchise and all detail fields'
     $data['vehicle'] = ['mode' => 'existing', 'id' => $vehicle->id];
     $data['details'] = ['franchise_owner_id' => $owner->id, 'renewal_date' => '2026-11-17', 'previous_expiration_date' => '2026-11-17', 'new_expiration_date' => '2027-11-17'];
     $this->postJson(route('transactions.store'), [...$data, 'franchise_id' => 999999])->assertUnprocessable()->assertJsonValidationErrors('franchise_id');
-    $this->postJson(route('transactions.store'), $data)->assertCreated();
+    $this->postJson(route('transactions.store'), [...$data, 'created_by' => 999999])->assertCreated();
     $transaction = $franchise->transactions()->sole();
-    expect($transaction->status)->toBe('pending')->and($transaction->renewal->franchise_owner_id)->toBe($owner->id);
+    expect($transaction->status)->toBe('pending')
+        ->and($transaction->renewal->franchise_owner_id)->toBe($owner->id)
+        ->and($transaction->created_by)->toBe($this->staff->id);
+    $this->getJson(route('transactions.show', $transaction))->assertOk()
+        ->assertJsonPath('transaction.creator.name', $this->staff->name)
+        ->assertJsonPath('transaction.processor', null)
+        ->assertJsonPath('transaction.approver', null);
 });
 
-test('authorized staff can review and approve a renewal once', function () {
+test('a renewal records the reviewer and approver separately', function () {
     $franchise = Franchise::create(['franchise_number' => 'SC-0001', 'expiration_date' => '2026-11-17']);
     $owner = FranchiseOwner::create(['first_name' => 'Ana', 'last_name' => 'Cruz']);
     $transaction = $franchise->transactions()->create([
         'transaction_type' => 'renewal', 'date_filed' => today(), 'certificate_issue_date' => '2026-11-18',
+        'created_by' => $this->staff->id,
     ]);
     $transaction->renewal()->create([
         'franchise_owner_id' => $owner->id, 'renewal_date' => '2026-11-18',
         'previous_expiration_date' => '2026-11-17', 'new_expiration_date' => '2027-11-17',
     ]);
     $url = route('transactions.status.update', $transaction);
+    $detailsUrl = route('transactions.show', $transaction);
 
     $this->actingAs($this->staff)->patchJson($url, ['status' => 'approved'])->assertForbidden();
-    $this->staff->givePermissionTo(Permission::create(['name' => 'process transactions', 'guard_name' => 'web']));
+    $processPermission = Permission::create(['name' => 'process transactions', 'guard_name' => 'web']);
+    $this->staff->givePermissionTo($processPermission);
+    $approver = User::create(['name' => 'Approval Staff', 'username' => 'tx-approver', 'password' => 'password']);
+    $approver->givePermissionTo('view transactions', $processPermission);
+
     $this->patchJson($url, ['status' => 'under_review'])->assertOk();
+    $this->getJson($detailsUrl)->assertOk()
+        ->assertJsonPath('transaction.processor.name', $this->staff->name)
+        ->assertJsonPath('transaction.approver', null);
     expect($franchise->fresh()->date_issued)->toBeNull();
-    $this->patchJson($url, ['status' => 'approved'])->assertOk();
+    $this->actingAs($approver)->patchJson($url, ['status' => 'approved'])->assertOk();
     $this->patchJson($url, ['status' => 'cancelled'])->assertUnprocessable()->assertJsonValidationErrors('status');
+    $this->getJson($detailsUrl)->assertOk()
+        ->assertJsonPath('transaction.creator.name', $this->staff->name)
+        ->assertJsonPath('transaction.processor.name', $this->staff->name)
+        ->assertJsonPath('transaction.approver.name', $approver->name);
+    $this->getJson(route('transactions.index', ['status' => 'approved']))->assertOk()
+        ->assertJsonPath('transactions.data.0.creator.name', $this->staff->name)
+        ->assertJsonPath('transactions.data.0.approver.name', $approver->name);
 
     $transaction->refresh();
     expect($transaction->status)->toBe('approved')
         ->and($transaction->processed_by)->toBe($this->staff->id)
+        ->and($transaction->approved_by)->toBe($approver->id)
         ->and($transaction->approved_at)->not->toBeNull();
     $franchise->refresh();
     expect($franchise->date_issued->toDateString())->toBe('2026-11-18')
         ->and($franchise->expiration_date->toDateString())->toBe('2027-11-17');
+});
+
+test('multiple transaction types are filed with their own required documents and no workflow details', function () {
+    Storage::fake('local');
+    $this->staff->givePermissionTo(Permission::create(['name' => 'process transactions', 'guard_name' => 'web']));
+    $franchise = Franchise::create(['franchise_number' => 'F-FILING', 'date_issued' => today()->subYear(), 'expiration_date' => today()]);
+    $owner = FranchiseOwner::create(['first_name' => 'Ana', 'last_name' => 'Cruz']);
+    $ownership = $owner->ownerships()->create(['franchise_id' => $franchise->id, 'started_at' => today()->subYear()]);
+    $nbi = Requirement::create(['transaction_type' => 'renewal', 'name' => 'NBI Clearance']);
+    $barangay = Requirement::create(['transaction_type' => 'amendment', 'name' => 'Barangay Clearance']);
+
+    $this->actingAs($this->staff)->getJson(route('transactions.index'))->assertOk()
+        ->assertJsonFragment(['id' => $nbi->id, 'name' => 'NBI Clearance', 'transaction_type' => 'renewal']);
+    $this->post(route('transactions.file'), ['franchise_id' => $franchise->id, 'filings' => [
+        ['transaction_type' => 'renewal', 'attachments' => [['requirement_id' => $nbi->id, 'file' => UploadedFile::fake()->create('nbi.pdf', 10, 'application/pdf')]]],
+        ['transaction_type' => 'amendment', 'attachments' => [['requirement_id' => $barangay->id, 'file' => UploadedFile::fake()->create('barangay.pdf', 10, 'application/pdf')]]],
+        ['transaction_type' => 'application'],
+    ]], ['Accept' => 'application/json'])->assertCreated()->assertJsonPath('count', 3);
+
+    $transactions = $franchise->transactions()->get()->keyBy('transaction_type');
+    expect($transactions)->toHaveCount(3);
+    foreach ($transactions as $transaction) {
+        expect($transaction->status)->toBe('pending')
+            ->and($transaction->created_by)->toBe($this->staff->id)
+            ->and($transaction->requirements_only)->toBeTrue();
+    }
+    foreach (['renewal' => $nbi, 'amendment' => $barangay] as $type => $requirement) {
+        $attachment = $transactions[$type]->attachments()->sole();
+        expect($attachment->requirement_id)->toBe($requirement->id)
+            ->and($attachment->document_name)->toBe($requirement->name)
+            ->and($attachment->franchise_ownership_id)->toBeNull();
+        Storage::disk('local')->assertExists($attachment->path);
+        $this->get(route('transactions.attachments.download', [$transactions[$type], $attachment]))->assertDownload();
+    }
+    $this->assertDatabaseCount('franchise_renewals', 0);
+    $this->assertDatabaseCount('franchise_amendments', 0);
+    expect($ownership->attachments()->count())->toBe(0);
+    $this->getJson(route('transactions.show', $transactions['renewal']))->assertOk()
+        ->assertJsonPath('next_statuses', ['under_review', 'rejected', 'cancelled']);
+    $this->patchJson(route('transactions.status.update', $transactions['renewal']), ['status' => 'approved'])
+        ->assertUnprocessable()->assertJsonValidationErrors('status');
+    expect($franchise->fresh()->date_issued->toDateString())->toBe(today()->subYear()->toDateString());
+});
+
+test('a filing is rejected atomically when a required document is missing or belongs to another type', function () {
+    Storage::fake('local');
+    $franchise = Franchise::create(['franchise_number' => 'F-FILING']);
+    $nbi = Requirement::create(['transaction_type' => 'renewal', 'name' => 'NBI Clearance']);
+    Requirement::create(['transaction_type' => 'amendment', 'name' => 'Barangay Clearance']);
+    $otherRequirement = Requirement::create(['transaction_type' => 'application', 'name' => 'Valid ID']);
+    $this->actingAs($this->staff);
+
+    $renewal = fn (): array => ['transaction_type' => 'renewal', 'attachments' => [
+        ['requirement_id' => $nbi->id, 'file' => UploadedFile::fake()->create('nbi.pdf', 10, 'application/pdf')],
+    ]];
+    $payload = ['franchise_id' => $franchise->id, 'filings' => [$renewal(), ['transaction_type' => 'amendment']]];
+    $this->post(route('transactions.file'), $payload, ['Accept' => 'application/json'])
+        ->assertUnprocessable()->assertJsonValidationErrors('filings.1.attachments');
+    $payload['filings'] = [$renewal(), ['transaction_type' => 'amendment', 'attachments' => [
+        ['requirement_id' => $otherRequirement->id, 'file' => UploadedFile::fake()->create('id.pdf', 10, 'application/pdf')],
+    ]]];
+    $this->post(route('transactions.file'), $payload, ['Accept' => 'application/json'])
+        ->assertUnprocessable()->assertJsonValidationErrors('filings.1.attachments.0.requirement_id');
+
+    $this->assertDatabaseCount('franchise_transactions', 0);
+    $this->assertDatabaseCount('attachments', 0);
+    expect(Storage::disk('local')->allFiles())->toBe([]);
 });
 
 test('all standalone transaction endpoints require transaction page permission', function () {
@@ -93,4 +186,5 @@ test('all standalone transaction endpoints require transaction page permission',
     $this->getJson(route('transactions.franchises'))->assertForbidden();
     $this->getJson(route('transactions.options', $franchise))->assertForbidden();
     $this->postJson(route('transactions.store'), [])->assertForbidden();
+    $this->postJson(route('transactions.file'), [])->assertForbidden();
 });

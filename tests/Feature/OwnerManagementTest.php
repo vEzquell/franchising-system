@@ -22,9 +22,11 @@ beforeEach(function () {
 test('owner page and mutations require page access', function () {
     $owner = FranchiseOwner::create(['first_name' => 'Ana', 'last_name' => 'Cruz']);
     $this->get(route('owners.index'))->assertRedirect(route('login'));
+    $this->getJson(route('owners.name-matches', ['first_name' => 'Ana']))->assertUnauthorized();
     $this->postJson(route('owners.store'), [])->assertUnauthorized();
     $other = User::create(['name' => 'Other', 'username' => 'owner-other', 'password' => 'password']);
     $this->actingAs($other)->getJson(route('owners.index'))->assertForbidden();
+    $this->getJson(route('owners.name-matches', ['first_name' => 'Ana']))->assertForbidden();
     $this->postJson(route('owners.store'), [])->assertForbidden();
     $this->postJson(route('owners.update', $owner), [])->assertForbidden();
     $other->assignRole(Role::create(['name' => 'superadmin', 'guard_name' => 'web']));
@@ -46,6 +48,24 @@ test('owners are paginated searchable and omit franchise assignments', function 
         $this->getJson(route('owners.index', ['search' => $search]))->assertOk()->assertJsonPath('owners.total', 1)->assertJsonPath('owners.data.0.contact_number', '09123456789')->assertJsonMissingPath('owners.data.0.ownerships');
     }
     $this->getJson(route('owners.index', ['search' => 'missing']))->assertOk()->assertJsonPath('owners.total', 0);
+});
+
+test('owner name lookup returns possible matches without creating an owner', function () {
+    $owner = FranchiseOwner::create(['first_name' => 'Ana', 'last_name' => 'Cruz', 'address' => 'Main Street', 'contact_number' => '09123456789']);
+    FranchiseOwner::create(['first_name' => 'Anabel', 'last_name' => 'Reyes']);
+    FranchiseOwner::create(['first_name' => 'Ben', 'last_name' => 'Cruz']);
+
+    $this->actingAs($this->staff)->getJson(route('owners.name-matches', ['first_name' => 'AN']))->assertOk()->assertJsonCount(2, 'owners');
+    $this->getJson(route('owners.name-matches', ['last_name' => 'cr']))->assertOk()->assertJsonCount(2, 'owners');
+    $this->getJson(route('owners.name-matches', ['first_name' => 'AN', 'last_name' => 'cr']))->assertOk()
+        ->assertJsonCount(1, 'owners')
+        ->assertJsonPath('owners.0.id', $owner->id)
+        ->assertJsonPath('owners.0.address', 'Main Street')
+        ->assertJsonMissingPath('owners.0.contact_number');
+    $this->getJson(route('owners.name-matches', ['first_name' => 'A']))->assertOk()->assertJsonCount(0, 'owners');
+    $this->getJson(route('owners.name-matches', ['first_name' => 'A%']))->assertOk()->assertJsonCount(0, 'owners');
+    $this->getJson(route('owners.name-matches', ['last_name' => str_repeat('x', 51)]))->assertUnprocessable()->assertJsonValidationErrors('last_name');
+    $this->assertDatabaseCount('franchise_owners', 3);
 });
 
 test('owners can be created and edited without losing phone formatting', function () {
@@ -133,24 +153,30 @@ test('assignment saves franchise expiration and rejects invalid dates without pa
     $this->assertDatabaseCount('franchise_ownerships', 1);
 });
 
-test('adding an owner can link a franchise, vehicle, route and ownership documents in one submission', function () {
+test('owner setup links a franchise, vehicle, route and ownership documents in one submission', function (bool $existingOwner) {
     Storage::fake('local');
     $this->staff->givePermissionTo(Permission::create(['name' => 'view franchise', 'guard_name' => 'web']));
     $this->staff->givePermissionTo(Permission::create(['name' => 'view ownerships', 'guard_name' => 'web']));
     $issuedAt = today()->subMonth()->toDateString();
     $franchise = Franchise::create(['franchise_number' => 'F-SETUP', 'date_issued' => $issuedAt]);
     $liner = Liner::create(['name' => 'Central Liner', 'route' => 'Central Terminal']);
+    $ownerDetails = ['first_name' => 'Ana', 'last_name' => 'Cruz'];
+    $owner = $existingOwner ? FranchiseOwner::create($ownerDetails) : null;
+    $url = $owner ? route('owners.franchises.store', $owner) : route('owners.store');
     $this->actingAs($this->staff)->getJson(route('owners.franchises.setup-options', $franchise))->assertOk()
         ->assertJsonPath('current_vehicle', null)->assertJsonPath('liners.0.route', 'Central Terminal');
 
-    $this->post(route('owners.store'), [
-        'first_name' => 'Ana', 'last_name' => 'Cruz', 'franchise_id' => $franchise->id,
+    $this->post($url, [
+        ...($owner ? [] : $ownerDetails), 'franchise_id' => $franchise->id,
         'expiration_date' => today()->addYear()->toDateString(), 'liner_id' => $liner->id,
         'vehicle' => ['mode' => 'new', 'make_type' => 'Motorcycle', 'plate_number' => 'SET-001'],
         'attachments' => [['document_name' => 'Franchise certificate', 'file' => UploadedFile::fake()->create('certificate.pdf', 10, 'application/pdf')]],
     ], ['Accept' => 'application/json'])->assertCreated();
 
     $ownership = FranchiseOwner::sole()->ownerships()->sole();
+    if ($owner) {
+        expect($ownership->owner->is($owner))->toBeTrue();
+    }
     $assignment = $franchise->vehicleAssignments()->sole();
     $attachment = $ownership->attachments()->sole();
     expect($ownership->started_at->toDateString())->toBe($issuedAt)
@@ -160,25 +186,32 @@ test('adding an owner can link a franchise, vehicle, route and ownership documen
     Storage::disk('local')->assertExists($attachment->path);
     $this->getJson(route('owners.franchises.setup-options', $franchise))->assertOk()
         ->assertJsonPath('current_vehicle.id', $assignment->vehicle_id)->assertJsonPath('liner_id', $liner->id);
-});
+})->with(['new owner' => [false], 'existing owner' => [true]]);
 
-test('owner setup honors permissions for route, vehicle and attachment changes', function () {
+test('owner setup honors permissions for route, vehicle and attachment changes', function (bool $existingOwner) {
     $franchise = Franchise::create(['franchise_number' => 'F-PERMISSION']);
-    $data = ['first_name' => 'Ana', 'last_name' => 'Cruz', 'franchise_id' => $franchise->id, 'started_at' => today()->toDateString(), 'expiration_date' => today()->addYear()->toDateString()];
+    $ownerDetails = ['first_name' => 'Ana', 'last_name' => 'Cruz'];
+    $owner = $existingOwner ? FranchiseOwner::create($ownerDetails) : null;
+    $url = $owner ? route('owners.franchises.store', $owner) : route('owners.store');
+    $data = [...($owner ? [] : $ownerDetails), 'franchise_id' => $franchise->id, 'started_at' => today()->toDateString(), 'expiration_date' => today()->addYear()->toDateString()];
     $this->actingAs($this->staff)->getJson(route('owners.franchises.setup-options', $franchise))->assertForbidden();
-    $this->postJson(route('owners.store'), [...$data, 'liner_id' => 1])->assertForbidden();
-    $this->postJson(route('owners.store'), [...$data, 'vehicle' => ['mode' => 'new']])->assertForbidden();
-    $this->postJson(route('owners.store'), [...$data, 'attachments' => []])->assertForbidden();
-    $this->assertDatabaseCount('franchise_owners', 0);
-    $this->postJson(route('owners.store'), $data)->assertCreated();
-});
+    $this->postJson($url, [...$data, 'liner_id' => 1])->assertForbidden();
+    $this->postJson($url, [...$data, 'vehicle' => ['mode' => 'new']])->assertForbidden();
+    $this->postJson($url, [...$data, 'attachments' => []])->assertForbidden();
+    $this->assertDatabaseCount('franchise_owners', $existingOwner ? 1 : 0);
+    $this->assertDatabaseCount('franchise_ownerships', 0);
+    $this->postJson($url, $data)->assertCreated();
+})->with(['new owner' => [false], 'existing owner' => [true]]);
 
-test('an attachment failure rolls back the owner setup and removes uploaded files', function () {
+test('an attachment failure rolls back the owner setup and removes uploaded files', function (bool $existingOwner) {
     Storage::fake('local');
     $this->staff->givePermissionTo(Permission::create(['name' => 'view franchise', 'guard_name' => 'web']));
     $this->staff->givePermissionTo(Permission::create(['name' => 'view ownerships', 'guard_name' => 'web']));
     $franchise = Franchise::create(['franchise_number' => 'F-ROLLBACK']);
     $liner = Liner::create(['name' => 'West Liner', 'route' => 'West Terminal']);
+    $ownerDetails = ['first_name' => 'Ana', 'last_name' => 'Cruz'];
+    $owner = $existingOwner ? FranchiseOwner::create($ownerDetails) : null;
+    $url = $owner ? route('owners.franchises.store', $owner) : route('owners.store');
     Attachment::creating(function (Attachment $attachment): void {
         if ($attachment->document_name === 'Second document') {
             throw new RuntimeException('Simulated attachment save failure.');
@@ -186,8 +219,8 @@ test('an attachment failure rolls back the owner setup and removes uploaded file
     });
 
     try {
-        $this->actingAs($this->staff)->post(route('owners.store'), [
-            'first_name' => 'Ana', 'last_name' => 'Cruz', 'franchise_id' => $franchise->id,
+        $this->actingAs($this->staff)->post($url, [
+            ...($owner ? [] : $ownerDetails), 'franchise_id' => $franchise->id,
             'started_at' => today()->toDateString(), 'expiration_date' => today()->addYear()->toDateString(), 'liner_id' => $liner->id,
             'vehicle' => ['mode' => 'new', 'make_type' => 'Motorcycle', 'plate_number' => 'SET-002'],
             'attachments' => [
@@ -199,9 +232,10 @@ test('an attachment failure rolls back the owner setup and removes uploaded file
         Attachment::flushEventListeners();
     }
 
-    foreach (['franchise_owners', 'franchise_ownerships', 'vehicles', 'franchise_vehicle_assignments', 'attachments'] as $table) {
+    $this->assertDatabaseCount('franchise_owners', $existingOwner ? 1 : 0);
+    foreach (['franchise_ownerships', 'vehicles', 'franchise_vehicle_assignments', 'attachments'] as $table) {
         $this->assertDatabaseCount($table, 0);
     }
     $this->assertDatabaseHas('franchises', ['id' => $franchise->id, 'date_issued' => null, 'expiration_date' => null, 'liner_id' => null]);
     expect(Storage::disk('local')->allFiles())->toBe([]);
-});
+})->with(['new owner' => [false], 'existing owner' => [true]]);

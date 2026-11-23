@@ -91,7 +91,7 @@ async function submit() {
                 <p v-if="errorMessage" role="alert" class="text-sm text-red-600">{{ errorMessage }}</p>
                 <div>
                     <label :for="`${fieldPrefix}-name`" class="mb-1.5 block text-sm font-medium text-gray-700">Full name</label>
-                    <input :id="`${fieldPrefix}-name`" ref="nameInput" v-model="form.name" required maxlength="150" autocomplete="name" :disabled="processing" :aria-invalid="!!errors.name" :aria-describedby="`${fieldPrefix}-name-error`" class="w-full rounded-lg border border-[#90CAF9] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#90CAF9]/50" />
+                    <input v-uppercase :id="`${fieldPrefix}-name`" ref="nameInput" v-model="form.name" required maxlength="150" autocomplete="name" :disabled="processing" :aria-invalid="!!errors.name" :aria-describedby="`${fieldPrefix}-name-error`" class="w-full rounded-lg border border-[#90CAF9] px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#90CAF9]/50" />
                     <p :id="`${fieldPrefix}-name-error`" class="mt-1 text-sm text-red-600">{{ errors.name }}</p>
                 </div>
                 <div>

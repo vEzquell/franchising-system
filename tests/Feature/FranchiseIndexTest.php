@@ -224,7 +224,10 @@ test('adding a transaction binds it to the selected franchise and starts pending
     $data = ['transaction_type' => 'application', 'date_filed' => '2026-11-17', 'remarks' => 'Renewal request', 'details' => ['confirmed' => true], 'franchise_id' => $other->id, 'status' => 'approved', 'approved_at' => '2026-11-17'];
     $this->actingAs($this->viewer)->postJson(route('franchise.transactions.store', $franchise), $data)->assertCreated();
     $transaction = $franchise->transactions()->sole();
-    expect($transaction->status)->toBe('pending')->and($transaction->approved_at)->toBeNull()->and($transaction->processed_by)->toBeNull();
+    expect($transaction->status)->toBe('pending')
+        ->and($transaction->created_by)->toBe($this->viewer->id)
+        ->and($transaction->approved_at)->toBeNull()
+        ->and($transaction->processed_by)->toBeNull();
     expect($other->transactions()->count())->toBe(0);
     $this->postJson(route('franchise.transactions.store', $franchise), ['transaction_type' => 'invalid', 'date_filed' => 'invalid'])->assertUnprocessable()->assertJsonValidationErrors(['transaction_type']);
     $this->postJson(route('franchise.transactions.store', 999999), $data)->assertNotFound();

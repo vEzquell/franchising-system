@@ -83,7 +83,7 @@ async function submit() {
                 <p v-if="errorMessage" role="alert" class="text-sm text-red-600">{{ errorMessage }}</p>
                 <div v-for="field in fields" :key="field.key">
                     <label :for="`liner-${field.key}`" class="mb-2 block text-sm font-medium text-gray-700">{{ field.label }}</label>
-                    <input :id="`liner-${field.key}`" v-model="form[field.key]" type="text" maxlength="191" required
+                    <input v-uppercase :id="`liner-${field.key}`" v-model="form[field.key]" type="text" maxlength="191" required
                         :autofocus="field.key === 'name'" :disabled="processing" :aria-invalid="!!errors[field.key]"
                         :aria-describedby="errors[field.key] ? `liner-${field.key}-error` : undefined"
                         class="w-full rounded-lg border border-[#90CAF9] px-3 py-2.5 text-sm focus:outline-[#2196F3]" />

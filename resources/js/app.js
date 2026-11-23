@@ -4,6 +4,7 @@ import { createApp, h } from 'vue';
 import { ZiggyVue } from '../../vendor/tightenco/ziggy';
 import { createInertiaApp } from '@inertiajs/vue3';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
+import { uppercaseInput } from './lib/uppercaseInput';
 
 createInertiaApp({
     resolve: (name) =>
@@ -16,6 +17,10 @@ createInertiaApp({
         createApp({
             render: () => h(App, props),
         })
+            .directive('uppercase', {
+                created: (element) => element.addEventListener('input', uppercaseInput, true),
+                beforeUnmount: (element) => element.removeEventListener('input', uppercaseInput, true),
+            })
             .use(plugin)
             .use(ZiggyVue, () => ({
                 ...props.initialPage.props.ziggy,

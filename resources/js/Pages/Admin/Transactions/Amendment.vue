@@ -25,7 +25,7 @@ watch(() => details.value.amendment_type, value => {
         <template v-else>
             <div v-for="(change, index) in details.changes" :key="index" class="space-y-3 rounded-lg border border-blue-100 p-3">
                 <Field v-model="change.field_name" :name="`details.changes.${index}.field_name`" label="Field to change" :options="details.amendment_type === 'change_route' ? [{ value: 'route', label: 'Route' }] : fields" :errors="errors" required />
-                <Field v-model="change.new_value" :name="`details.changes.${index}.new_value`" label="Proposed value" :type="['date_issued', 'expiration_date'].includes(change.field_name) ? 'date' : 'text'" :errors="errors" required />
+                <Field v-model="change.new_value" :name="`details.changes.${index}.new_value`" label="Proposed value" :preserve-case="change.field_name === 'status'" :type="['date_issued', 'expiration_date'].includes(change.field_name) ? 'date' : 'text'" :errors="errors" required />
                 <button v-if="details.changes.length > 1" type="button" class="text-sm text-red-700 underline" @click="details.changes.splice(index, 1)">Remove field</button>
             </div>
             <p v-if="errors['details.changes']" role="alert" class="text-sm text-red-600">{{ errors['details.changes'] }}</p>

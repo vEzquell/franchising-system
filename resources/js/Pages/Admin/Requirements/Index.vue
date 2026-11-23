@@ -132,12 +132,12 @@ async function save() {
                     </div>
                     <div>
                         <label for="requirement-name" class="mb-2 block text-sm font-medium">Requirement name</label>
-                        <input id="requirement-name" v-model="form.name" required maxlength="191" autofocus aria-describedby="requirement-name-error" :aria-invalid="!!errors.name" class="w-full rounded-lg border border-blue-300 px-3 py-2.5 text-sm" />
+                        <input v-uppercase id="requirement-name" v-model="form.name" required maxlength="191" autofocus aria-describedby="requirement-name-error" :aria-invalid="!!errors.name" class="w-full rounded-lg border border-blue-300 px-3 py-2.5 text-sm" />
                         <p id="requirement-name-error" role="alert" class="text-sm text-red-700">{{ errors.name?.[0] }}</p>
                     </div>
                     <div>
                         <label for="requirement-description" class="mb-2 block text-sm font-medium">Instructions <span class="font-normal text-slate-500">(optional)</span></label>
-                        <textarea id="requirement-description" v-model="form.description" rows="3" maxlength="1000" aria-describedby="requirement-description-error" :aria-invalid="!!errors.description" class="w-full rounded-lg border border-blue-300 px-3 py-2.5 text-sm"></textarea>
+                        <textarea v-uppercase id="requirement-description" v-model="form.description" rows="3" maxlength="1000" aria-describedby="requirement-description-error" :aria-invalid="!!errors.description" class="w-full rounded-lg border border-blue-300 px-3 py-2.5 text-sm"></textarea>
                         <p id="requirement-description-error" role="alert" class="text-sm text-red-700">{{ errors.description?.[0] }}</p>
                     </div>
                 </fieldset>

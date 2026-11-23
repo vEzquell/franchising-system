@@ -61,8 +61,12 @@ onBeforeUnmount(() => request?.abort())
             <p v-if="loading" role="status">Loading...</p><p v-if="errorMessage" role="alert" class="text-sm text-red-600">{{ errorMessage }} <button type="button" class="underline" @click="load">Retry</button></p>
             <div v-if="transaction" class="space-y-4 text-sm">
                 <p><strong>Franchise:</strong> {{ transaction.franchise?.franchise_number }}</p><p><strong>Type:</strong> {{ transaction.type?.name ?? transaction.transaction_type }}</p><p class="capitalize"><strong>Status:</strong> {{ transaction.status.replaceAll('_', ' ') }}</p>
+                <p><strong>Created by:</strong> {{ transaction.creator?.name ?? 'Unknown' }}</p>
+                <p><strong>Processed by:</strong> {{ transaction.processor?.name ?? '—' }}</p>
+                <p><strong>Approved by:</strong> {{ transaction.approver?.name ?? (transaction.status === 'approved' ? 'Unknown' : '—') }}</p>
                 <p v-if="transaction.remarks" class="whitespace-pre-line break-words"><strong>Remarks:</strong> {{ transaction.remarks }}</p>
                 <p v-if="transaction.certificate_issue_date"><strong>Requested certificate issue date</strong> {{ transaction.certificate_issue_date }}</p>
+                <p v-if="transaction.requirements_only && ['pending', 'under_review'].includes(transaction.status)" class="rounded-lg bg-blue-50 p-3 text-slate-700">Filed documents are available below. Approval is handled separately.</p>
                 <form v-if="nextStatuses.length" class="space-y-2 rounded-lg border border-blue-100 p-3" @submit.prevent="updateStatus">
                     <label for="next-transaction-status" class="block font-semibold">Change status</label>
                     <div class="flex flex-wrap gap-2">

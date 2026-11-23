@@ -4,10 +4,12 @@ namespace App\Services\Admin;
 
 use App\Models\Franchise;
 use App\Models\FranchiseTransaction;
+use App\Models\Requirement;
 use App\Models\TransactionType;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -15,9 +17,9 @@ use Illuminate\Validation\ValidationException;
 
 class FranchiseTransactionService
 {
-    public function updateStatus(FranchiseTransaction $transaction, string $status, User $processor): void
+    public function updateStatus(FranchiseTransaction $transaction, string $status, User $actor): void
     {
-        DB::transaction(function () use ($transaction, $status, $processor) {
+        DB::transaction(function () use ($transaction, $status, $actor) {
             $franchise = Franchise::query()->lockForUpdate()->findOrFail($transaction->franchise_id);
             $transaction = FranchiseTransaction::query()->lockForUpdate()->findOrFail($transaction->id);
 
@@ -37,10 +39,12 @@ class FranchiseTransactionService
                     app(VehicleService::class)->substitute($franchise, $transaction->substitution);
                 }
                 $transaction->approved_at = now();
+                $transaction->approved_by = $actor->id;
+            } else {
+                $transaction->processed_by = $actor->id;
             }
 
             $transaction->status = $status;
-            $transaction->processed_by = $processor->id;
             $transaction->save();
         });
     }
@@ -71,17 +75,84 @@ class FranchiseTransactionService
 
     public function paginate(string $search = '', string $status = ''): LengthAwarePaginator
     {
-        return FranchiseTransaction::query()->with(['franchise:id,franchise_number', 'type:code,name'])->withCount('attachments')
+        return FranchiseTransaction::query()->with(['franchise:id,franchise_number', 'type:code,name', 'creator:id,name', 'approver:id,name'])->withCount('attachments')
             ->when($search !== '', fn (Builder $query) => $query->whereHas('franchise', fn (Builder $query) => $query->where('franchise_number', 'like', '%'.$search.'%')))
             ->when($status !== '', fn (Builder $query) => $query->where('status', $status))
             ->orderByDesc('created_at')->orderByDesc('id')->paginate(10)->withQueryString();
     }
 
-    public function create(Franchise $franchise, array $data): FranchiseTransaction
+    /** @param list<array{transaction_type: string, attachments?: list<array{requirement_id: int, file: UploadedFile}>}> $filings */
+    public function fileRequirements(int $franchiseId, array $filings, User $creator): void
     {
         $storedPaths = [];
         try {
-            return DB::transaction(function () use ($franchise, $data, &$storedPaths) {
+            DB::transaction(function () use ($franchiseId, $filings, $creator, &$storedPaths): void {
+                $types = TransactionType::query()->active()->whereIn('code', array_column($filings, 'transaction_type'))
+                    ->orderBy('code')->sharedLock()->get(['code'])->keyBy('code');
+                $franchise = Franchise::query()->lockForUpdate()->findOrFail($franchiseId);
+
+                foreach ($filings as $index => $filing) {
+                    $code = $filing['transaction_type'];
+                    if (! $types->has($code)) {
+                        throw ValidationException::withMessages(["filings.{$index}.transaction_type" => 'Select an active transaction type.']);
+                    }
+
+                    $uploads = $this->requirementUploads($code, $filing['attachments'] ?? [], $index);
+                    $transaction = $franchise->transactions()->create([
+                        'transaction_type' => $code,
+                        'date_filed' => today()->toDateString(),
+                        'status' => 'pending',
+                        'created_by' => $creator->id,
+                        'requirements_only' => true,
+                    ]);
+
+                    app(AttachmentService::class)->store($transaction->attachments(), $uploads, 'transaction-attachments/'.$transaction->id, $storedPaths);
+                }
+            });
+        } catch (\Throwable $exception) {
+            if ($storedPaths) {
+                Storage::disk('local')->delete($storedPaths);
+            }
+            throw $exception;
+        }
+    }
+
+    /**
+     * @param  list<array{requirement_id: int, file: UploadedFile}>  $attachments
+     * @return list<array{requirement_id: int, file: UploadedFile, document_name: string, document_type: string}>
+     */
+    private function requirementUploads(string $code, array $attachments, int $filingIndex): array
+    {
+        $requirements = Requirement::query()->where('transaction_type', $code)->orderBy('id')
+            ->sharedLock()->get(['id', 'name'])->keyBy('id');
+        $uploads = [];
+
+        foreach ($attachments as $index => $attachment) {
+            $requirement = $requirements->get((int) $attachment['requirement_id']);
+            if ($requirement === null) {
+                throw ValidationException::withMessages(["filings.{$filingIndex}.attachments.{$index}.requirement_id" => 'This requirement no longer belongs to the selected transaction type. Refresh the page and try again.']);
+            }
+
+            $uploads[] = [
+                'requirement_id' => $requirement->id,
+                'file' => $attachment['file'],
+                'document_name' => $requirement->name,
+                'document_type' => 'Requirement',
+            ];
+        }
+
+        if (count($uploads) !== $requirements->count()) {
+            throw ValidationException::withMessages(["filings.{$filingIndex}.attachments" => 'Attach a file for each requirement. If the requirements have changed, refresh the page and try again.']);
+        }
+
+        return $uploads;
+    }
+
+    public function create(Franchise $franchise, array $data, User $creator): FranchiseTransaction
+    {
+        $storedPaths = [];
+        try {
+            return DB::transaction(function () use ($franchise, $data, $creator, &$storedPaths) {
                 $type = TransactionType::query()->active()->sharedLock()->find($data['transaction_type']);
                 if (! $type) {
                     throw ValidationException::withMessages(['transaction_type' => 'Select an active transaction type.']);
@@ -107,6 +178,7 @@ class FranchiseTransactionService
                     'certificate_issue_date' => $data['certificate_issue_date'] ?? null,
                     'remarks' => $data['remarks'] ?? null,
                     'status' => 'pending',
+                    'created_by' => $creator->id,
                 ]);
                 $details = $data['details'] ?? [];
                 if ($data['transaction_type'] === 'renewal') {

@@ -97,7 +97,7 @@ async function save() {
                 <fieldset :disabled="saving" class="space-y-4">
                     <div>
                         <label for="transaction-type-name" class="mb-2 block text-sm font-medium">Name</label>
-                        <input id="transaction-type-name" v-model="form.name" required maxlength="120" autofocus aria-describedby="transaction-type-name-error" :aria-invalid="!!errors.name" class="w-full rounded-lg border border-blue-300 px-3 py-2.5 text-sm" />
+                        <input v-uppercase id="transaction-type-name" v-model="form.name" required maxlength="120" autofocus aria-describedby="transaction-type-name-error" :aria-invalid="!!errors.name" class="w-full rounded-lg border border-blue-300 px-3 py-2.5 text-sm" />
                         <p id="transaction-type-name-error" role="alert" class="text-sm text-red-700">{{ errors.name?.[0] }}</p>
                     </div>
                     <label class="flex items-center gap-2 rounded-lg bg-blue-50 p-3 text-sm font-medium"><input v-model="form.is_active" type="checkbox" aria-describedby="transaction-type-status-error" class="size-4 accent-[#0D47A1]" /> Available for new transactions</label>

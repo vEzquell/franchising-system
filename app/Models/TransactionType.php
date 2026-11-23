@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Attributes\Scope;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 
 class TransactionType extends Model
@@ -46,6 +47,11 @@ class TransactionType extends Model
     public static function hasBuiltInWorkflow(mixed $code): bool
     {
         return is_string($code) && array_key_exists($code, self::BUILT_IN_TYPES);
+    }
+
+    public function requirements(): HasMany
+    {
+        return $this->hasMany(Requirement::class, 'transaction_type');
     }
 
     #[Scope]

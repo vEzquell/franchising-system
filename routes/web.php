@@ -83,6 +83,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/franchises', [FranchiseTransactionController::class, 'franchises'])->name('franchises');
         Route::get('/franchises/{franchise}/options', [FranchiseTransactionController::class, 'options'])->name('options');
         Route::post('/', [FranchiseTransactionController::class, 'storeSelected'])->name('store');
+        Route::post('/filings', [FranchiseTransactionController::class, 'file'])->name('file');
         Route::get('/{transaction}', [FranchiseTransactionController::class, 'show'])->name('show');
         Route::patch('/{transaction}/status', [FranchiseTransactionController::class, 'updateStatus'])
             ->middleware('can:process transactions')->name('status.update');
@@ -110,6 +111,7 @@ Route::middleware('auth')->group(function () {
     });
     // Owner Management
     Route::get('/owners', [OwnerController::class, 'index'])->middleware('can:view owners')->name('owners.index');
+    Route::get('/owners/name-matches', [OwnerController::class, 'nameMatches'])->middleware('can:view owners')->name('owners.name-matches');
     Route::get('/owners/franchises', [OwnerController::class, 'franchises'])->middleware('can:view owners')->name('owners.franchises');
     Route::get('/owners/franchises/{franchise}/setup-options', [OwnerController::class, 'setupOptions'])
         ->middleware(['can:view owners', 'can:view franchise'])->name('owners.franchises.setup-options');

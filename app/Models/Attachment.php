@@ -8,7 +8,7 @@ use Illuminate\Validation\ValidationException;
 
 class Attachment extends Model
 {
-    protected $fillable = ['franchise_transaction_id', 'franchise_ownership_id', 'document_type', 'document_name', 'original_name', 'disk', 'path', 'mime_type', 'size'];
+    protected $fillable = ['franchise_transaction_id', 'franchise_ownership_id', 'requirement_id', 'document_type', 'document_name', 'original_name', 'disk', 'path', 'mime_type', 'size'];
 
     protected $hidden = ['disk', 'path'];
 

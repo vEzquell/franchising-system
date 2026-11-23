@@ -72,7 +72,7 @@ async function submit() {
                 <p v-if="errorMessage" role="alert" class="text-sm text-red-600">{{ errorMessage }}</p>
                 <div>
                     <label for="create-franchise-number" class="mb-2 block text-sm font-medium text-gray-700">Franchise number <span aria-hidden="true" class="text-red-600">*</span></label>
-                    <input id="create-franchise-number" ref="numberInput" v-model="form.franchise_number" required maxlength="50" :disabled="processing" :aria-invalid="!!errors.franchise_number" aria-describedby="create-franchise-number-error" class="w-full rounded-lg border border-[#90CAF9] px-3 py-2.5 text-sm focus:outline-[#2196F3]" />
+                    <input v-uppercase id="create-franchise-number" ref="numberInput" v-model="form.franchise_number" required maxlength="50" :disabled="processing" :aria-invalid="!!errors.franchise_number" aria-describedby="create-franchise-number-error" class="w-full rounded-lg border border-[#90CAF9] px-3 py-2.5 text-sm focus:outline-[#2196F3]" />
                     <p id="create-franchise-number-error" role="alert" class="mt-1 text-sm text-red-600">{{ errors.franchise_number }}</p>
                 </div>
                 <div>

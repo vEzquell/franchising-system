@@ -44,7 +44,10 @@ async function loadTransactions(page = 1) {
     } finally { if (request === current) loading.value = false }
 }
 function openCreate() { initialFranchise.value = null; createOpen.value = true }
-function created() { notice.value = 'Transaction submitted as pending.'; loadTransactions() }
+function created(count) {
+    notice.value = count === 1 ? 'Transaction submitted as pending.' : `${count} transactions submitted as pending.`
+    loadTransactions()
+}
 function statusUpdated() { notice.value = 'Transaction status updated.'; loadTransactions(transactions.value.current_page) }
 watch(search, () => { clearTimeout(searchTimer); request?.abort(); searchTimer = setTimeout(() => loadTransactions(), 300) })
 watch(status, () => loadTransactions())
@@ -86,11 +89,11 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); request?.abort(); shortcutReq
                     </div>
                 </div>
                 <div class="overflow-x-auto" :aria-busy="loading">
-                    <table class="w-full min-w-[700px] text-left text-sm">
-                        <thead class="bg-[#E3F2FD] text-[#0D47A1]"><tr><th scope="col" class="px-5 py-4">#</th><th scope="col" class="px-5 py-4">Franchise number</th><th scope="col" class="px-5 py-4">Type</th><th scope="col" class="px-5 py-4">Status</th><th scope="col" class="px-5 py-4">Created</th><th scope="col" class="px-5 py-4">Actions</th></tr></thead>
+                    <table class="w-full min-w-[1000px] text-left text-sm">
+                        <thead class="bg-[#E3F2FD] text-[#0D47A1]"><tr><th scope="col" class="px-5 py-4">#</th><th scope="col" class="px-5 py-4">Franchise number</th><th scope="col" class="px-5 py-4">Type</th><th scope="col" class="px-5 py-4">Status</th><th scope="col" class="px-5 py-4">Created</th><th scope="col" class="px-5 py-4">Created by</th><th scope="col" class="px-5 py-4">Approved by</th><th scope="col" class="px-5 py-4">Actions</th></tr></thead>
                         <tbody class="divide-y divide-[#E3F2FD]">
-                            <tr v-for="(transaction, index) in transactions.data" :key="transaction.id" class="hover:bg-blue-50/50"><td class="px-5 py-4 text-gray-500">{{ transactions.from + index }}</td><td class="px-5 py-4 font-semibold text-gray-800">{{ transaction.franchise?.franchise_number || 'Not assigned' }}</td><td class="px-5 py-4">{{ transaction.type?.name ?? label(transaction.transaction_type) }}</td><td class="px-5 py-4"><span class="rounded-full px-3 py-1 text-xs font-semibold" :class="transaction.status === 'approved' ? 'bg-green-50 text-green-700' : transaction.status === 'rejected' ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-800'">{{ label(transaction.status) }}</span></td><td class="px-5 py-4 text-gray-500">{{ formatTime(transaction.created_at) }}</td><td class="px-5 py-4"><button type="button" title="View transaction and attachments" :aria-label="`View transaction ${transaction.id}`" class="rounded-lg bg-blue-50 p-2 text-[#0D47A1]" @click="show(transaction)"><Eye class="h-4 w-4" /></button></td></tr>
-                            <tr v-if="!transactions.data.length"><td colspan="6" class="px-5 py-16 text-center"><FileText class="mx-auto mb-3 h-10 w-10 text-[#2196F3]" /><p class="font-medium text-gray-700">No transactions found</p><p class="mt-1 text-gray-500">{{ search || status ? 'Try another search or filter.' : 'Start with New Transaction.' }}</p></td></tr>
+                            <tr v-for="(transaction, index) in transactions.data" :key="transaction.id" class="hover:bg-blue-50/50"><td class="px-5 py-4 text-gray-500">{{ transactions.from + index }}</td><td class="px-5 py-4 font-semibold text-gray-800">{{ transaction.franchise?.franchise_number || 'Not assigned' }}</td><td class="px-5 py-4">{{ transaction.type?.name ?? label(transaction.transaction_type) }}</td><td class="px-5 py-4"><span class="rounded-full px-3 py-1 text-xs font-semibold" :class="transaction.status === 'approved' ? 'bg-green-50 text-green-700' : transaction.status === 'rejected' ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-800'">{{ label(transaction.status) }}</span></td><td class="px-5 py-4 text-gray-500">{{ formatTime(transaction.created_at) }}</td><td class="px-5 py-4">{{ transaction.creator?.name ?? 'Unknown' }}</td><td class="px-5 py-4">{{ transaction.status === 'approved' ? (transaction.approver?.name ?? 'Unknown') : '—' }}</td><td class="px-5 py-4"><button type="button" title="View transaction and attachments" :aria-label="`View transaction ${transaction.id}`" class="rounded-lg bg-blue-50 p-2 text-[#0D47A1]" @click="show(transaction)"><Eye class="h-4 w-4" /></button></td></tr>
+                            <tr v-if="!transactions.data.length"><td colspan="8" class="px-5 py-16 text-center"><FileText class="mx-auto mb-3 h-10 w-10 text-[#2196F3]" /><p class="font-medium text-gray-700">No transactions found</p><p class="mt-1 text-gray-500">{{ search || status ? 'Try another search or filter.' : 'Start with New Transaction.' }}</p></td></tr>
                         </tbody>
                     </table>
                 </div>

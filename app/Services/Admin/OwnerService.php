@@ -8,6 +8,7 @@ use App\Models\FranchiseOwnership;
 use App\Models\FranchiseTransfer;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -47,32 +48,54 @@ class OwnerService
             ->paginate(10)->withQueryString();
     }
 
+    /** @return Collection<int, FranchiseOwner> */
+    public function findNameMatches(string $firstName, string $lastName): Collection
+    {
+        if (max(mb_strlen($firstName), mb_strlen($lastName)) < 2) {
+            return new Collection;
+        }
+
+        $query = FranchiseOwner::query();
+
+        foreach (['first_name' => $firstName, 'last_name' => $lastName] as $field => $name) {
+            if ($name !== '') {
+                $prefix = strtr($name, ['!' => '!!', '%' => '!%', '_' => '!_']);
+                $query->whereRaw("{$field} LIKE ? ESCAPE '!'", [$prefix.'%']);
+            }
+        }
+
+        return $query->orderBy('last_name')->orderBy('first_name')->orderBy('id')->limit(5)
+            ->get(['id', 'first_name', 'middle_name', 'last_name', 'suffix', 'address']);
+    }
+
     public function assignFranchise(FranchiseOwner $owner, array $data): FranchiseOwnership
     {
-        return DB::transaction(function () use ($owner, $data) {
-            $franchise = Franchise::query()->lockForUpdate()->findOrFail($data['franchise_id']);
-            $startedAt = $franchise->date_issued?->toDateString() ?? $data['started_at'] ?? null;
-            if ($startedAt === null || $startedAt > today()->toDateString()) {
-                throw ValidationException::withMessages(['started_at' => 'The ownership start date must be today or earlier.']);
-            }
+        return $this->saveFranchiseSetup($data, $owner);
+    }
 
-            if ($data['expiration_date'] < $startedAt) {
-                throw ValidationException::withMessages(['expiration_date' => 'The expiration date must be on or after the ownership start date.']);
-            }
+    private function createOwnership(FranchiseOwner $owner, Franchise $franchise, array $data): FranchiseOwnership
+    {
+        $startedAt = $franchise->date_issued?->toDateString() ?? $data['started_at'] ?? null;
+        if ($startedAt === null || $startedAt > today()->toDateString()) {
+            throw ValidationException::withMessages(['started_at' => 'The ownership start date must be today or earlier.']);
+        }
 
-            $overlaps = $franchise->ownerships()->where(fn (Builder $query) => $query
-                ->whereNull('ended_at')->orWhereDate('ended_at', '>', $startedAt))->exists();
-            if ($overlaps) {
-                throw ValidationException::withMessages(['franchise_id' => 'This franchise already has an overlapping ownership. Use an ownership transfer to change its owner.']);
-            }
+        if ($data['expiration_date'] < $startedAt) {
+            throw ValidationException::withMessages(['expiration_date' => 'The expiration date must be on or after the ownership start date.']);
+        }
 
-            $franchise->update([
-                'date_issued' => $startedAt,
-                'expiration_date' => $data['expiration_date'],
-            ]);
+        $overlaps = $franchise->ownerships()->where(fn (Builder $query) => $query
+            ->whereNull('ended_at')->orWhereDate('ended_at', '>', $startedAt))->exists();
+        if ($overlaps) {
+            throw ValidationException::withMessages(['franchise_id' => 'This franchise already has an overlapping ownership. Use an ownership transfer to change its owner.']);
+        }
 
-            return $owner->ownerships()->create(['franchise_id' => $franchise->id, 'started_at' => $startedAt]);
-        });
+        $franchise->update([
+            'date_issued' => $startedAt,
+            'expiration_date' => $data['expiration_date'],
+        ]);
+
+        return $owner->ownerships()->create(['franchise_id' => $franchise->id, 'started_at' => $startedAt]);
     }
 
     public function create(array $data): FranchiseOwner
@@ -82,12 +105,17 @@ class OwnerService
 
     public function createWithFranchise(array $data): FranchiseOwner
     {
+        return $this->saveFranchiseSetup($data)->owner;
+    }
+
+    private function saveFranchiseSetup(array $data, ?FranchiseOwner $owner = null): FranchiseOwnership
+    {
         $storedPaths = [];
         try {
-            return DB::transaction(function () use ($data, &$storedPaths): FranchiseOwner {
-                $owner = $this->create(Arr::only($data, ['first_name', 'middle_name', 'last_name', 'suffix', 'address', 'contact_number']));
-                $ownership = $this->assignFranchise($owner, $data);
-                $franchise = $ownership->franchise;
+            return DB::transaction(function () use ($data, $owner, &$storedPaths): FranchiseOwnership {
+                $owner ??= $this->create(Arr::only($data, ['first_name', 'middle_name', 'last_name', 'suffix', 'address', 'contact_number']));
+                $franchise = Franchise::query()->lockForUpdate()->findOrFail($data['franchise_id']);
+                $ownership = $this->createOwnership($owner, $franchise, $data);
 
                 if (isset($data['vehicle'])) {
                     app(VehicleService::class)->assign($franchise, [
@@ -105,7 +133,7 @@ class OwnerService
                     app(AttachmentService::class)->store($ownership->attachments(), $data['attachments'], 'ownership-attachments/'.$ownership->id, $storedPaths);
                 }
 
-                return $owner;
+                return $ownership->setRelation('owner', $owner);
             });
         } catch (\Throwable $exception) {
             if ($storedPaths) {

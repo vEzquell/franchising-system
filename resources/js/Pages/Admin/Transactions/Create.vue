@@ -1,242 +1,229 @@
 <script setup>
-import { computed, inject, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { usePage } from '@inertiajs/vue3'
-import { X } from 'lucide-vue-next'
-import { formatOwnerName } from '@/lib/formatOwnerName'
+import { computed, inject, nextTick, ref, watch } from 'vue'
+import { ScanLine, Upload, X } from 'lucide-vue-next'
 import http from '@/lib/http'
-import Field from './Field.vue'
-import VehicleForm from './VehicleForm.vue'
-import Attachments from './Attachments.vue'
 import FranchiseSelect from './FranchiseSelect.vue'
-import Renewal from './Renewal.vue'
-import Amendment from './Amendment.vue'
-import Substitution from './Substitution.vue'
-import Application from './Application.vue'
-import OwnerForm from '../Owner/Create.vue'
+import ScannerCapture from './ScannerCapture.vue'
 
 const open = defineModel('open', { type: Boolean, default: false })
 const props = defineProps({ initialFranchise: { type: Object, default: null }, transactionTypes: { type: Array, required: true } })
-const franchise = ref(null)
 const emit = defineEmits(['created'])
 const route = inject('route')
 const dialog = ref(null)
+const stepPanel = ref(null)
 const step = ref(1)
-const saving = ref(false)
-const loading = ref(false)
-const optionsError = ref('')
-const errorMessage = ref('')
+const franchise = ref(null)
+const selectedCodes = ref([])
+const selectedTypes = computed(() => props.transactionTypes.filter(type => selectedCodes.value.includes(type.value)))
+const files = ref({})
+const fileErrors = ref({})
 const errors = ref({})
-const ownerFormOpen = ref(false)
-const page = usePage()
-const canAddOwner = computed(() => page.props.auth?.isSuperAdmin || page.props.auth?.permissions?.includes('view owners'))
-const options = ref({ owners: [], current_owner_ids: [], vehicles: [] })
-const form = reactive({ transaction_type: '', certificate_issue_date: '', remarks: '' })
-const details = ref({})
-const vehicle = ref({ mode: 'existing', id: '', make_type: '', plate_number: '', motor_number: '', chassis_number: '' })
-const attachments = ref([])
-const selectedType = computed(() => props.transactionTypes.find(type => type.value === form.transaction_type))
-const workflow = computed(() => selectedType.value?.workflow)
-const isTransfer = computed(() => workflow.value === 'amendment' && details.value.amendment_type === 'transfer_ownership')
-const requiresVehicle = computed(() => ['application', 'renewal', 'substitution'].includes(workflow.value))
-const hasVehicleStep = computed(() => requiresVehicle.value || isTransfer.value)
-const includesVehicle = computed(() => requiresVehicle.value || (isTransfer.value && details.value.change_vehicle === '1'))
-const attachmentsStep = computed(() => hasVehicleStep.value ? 4 : 3)
-const title = computed(() => {
-    if (step.value === 1) return 'Add Transaction'
-    if (step.value === attachmentsStep.value) return 'Attachments'
-    if (step.value === 3) return 'Vehicle information'
-    return `${selectedType.value?.label ?? 'Transaction'} details`
-})
-const owners = computed(() => options.value.owners.map(owner => ({ value: owner.id, label: formatOwnerName(owner) })))
-const currentOwners = computed(() => owners.value.filter(owner => options.value.current_owner_ids.includes(owner.value)))
-const currentVehicles = computed(() => (options.value.current_vehicles ?? []).map(item => ({ value: item.id, label: `${item.make_type}: ${item.plate_number || item.motor_number || item.chassis_number || '#' + item.id}` })))
-const transactionRequirements = computed(() => (options.value.requirements ?? []).filter(requirement => requirement.transaction_type === form.transaction_type))
-let optionsRequest
-function localDate() {
-    const date = new Date()
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-}
-function resetDetails() {
-    vehicle.value = { mode: 'existing', id: '', make_type: '', plate_number: '', motor_number: '', chassis_number: '' }
-    details.value = {
-        franchise_owner_id: '', renewal_date: localDate(),
-        previous_expiration_date: franchise.value?.expiration_date?.slice(0, 10) ?? '', new_expiration_date: '',
-        previous_vehicle_id: '', new_vehicle_id: '', substitution_date: localDate(), reason: '',
-        amendment_type: 'change_details', previous_owner_id: '', new_owner_id: '', transfer_date: localDate(), change_vehicle: '0',
-        changes: [{ field_name: 'franchise_number', new_value: '' }], confirmed: false,
-    }
-}
-watch(() => form.transaction_type, resetDetails)
-async function loadOptions() {
-    optionsRequest?.abort()
-    const request = new AbortController()
-    optionsRequest = request
-    loading.value = true
-    optionsError.value = ''
-    try {
-        const { data } = await http.get(route('transactions.options', franchise.value.id), { signal: request.signal })
-        if (!request.signal.aborted) {
-            options.value = data
-            if (data.current_vehicles?.length === 1) {
-                const current = data.current_vehicles[0]
-                details.value.previous_vehicle_id = current.id
-                if (workflow.value === 'renewal') Object.assign(vehicle.value, { ...current, mode: 'existing' })
-            }
-        }
-    } catch (error) {
-        if (!request.signal.aborted) optionsError.value = 'Unable to load owners and vehicles.'
-    } finally {
-        if (optionsRequest === request) loading.value = false
-    }
-}
+const errorMessage = ref('')
+const saving = ref(false)
+const scanOpen = ref(false)
+const scannedRequirement = ref(null)
+const stepLabels = ['Transaction types', 'Franchise', 'Required attachments']
+const acceptedTypes = ['application/pdf', 'image/jpeg', 'image/png']
+const maxFileSize = 5 * 1024 * 1024
+const maxTotalSize = 6 * 1024 * 1024
+const typeErrors = computed(() => Object.entries(errors.value)
+    .filter(([field]) => /^filings\.\d+\.transaction_type$/.test(field)).map(([, message]) => message))
+const selectedRequirements = computed(() => selectedTypes.value.flatMap(type => type.requirements))
+
 watch(open, async value => {
     await nextTick()
     if (value) {
-        franchise.value = props.initialFranchise
-        attachments.value = []
         step.value = 1
+        franchise.value = props.initialFranchise
+        selectedCodes.value = []
+        files.value = {}
+        fileErrors.value = {}
         errors.value = {}
         errorMessage.value = ''
-        options.value = { owners: [], current_owner_ids: [], vehicles: [] }
-        const defaultType = props.transactionTypes.find(type => type.workflow === 'renewal') ?? props.transactionTypes[0]
-        Object.assign(form, { transaction_type: defaultType?.value ?? '', certificate_issue_date: localDate(), remarks: '' })
-        resetDetails()
         if (!dialog.value.open) dialog.value.showModal()
-        if (franchise.value) loadOptions()
+        await nextTick()
+        stepPanel.value?.querySelector('input')?.focus()
     } else {
-        optionsRequest?.abort()
+        scanOpen.value = false
         dialog.value.close()
     }
 })
+
 function close() {
     if (!saving.value) open.value = false
 }
-function ownerSaved(_message, owner) {
-    options.value.owners.push(owner)
-    details.value.new_owner_id = owner.id
-    delete errors.value['details.new_owner_id']
+
+async function goToStep(destination) {
+    step.value = destination
+    await nextTick()
+    stepPanel.value?.focus()
 }
+
+function setFile(requirementId, file) {
+    const otherFiles = selectedRequirements.value
+        .filter(requirement => requirement.id !== requirementId)
+        .reduce((total, requirement) => total + (files.value[requirement.id]?.size ?? 0), 0)
+
+    if (!acceptedTypes.includes(file.type)) {
+        fileErrors.value[requirementId] = 'Choose a PDF, JPG, or PNG file.'
+    } else if (file.size > maxFileSize) {
+        fileErrors.value[requirementId] = 'Each file must be 5 MB or smaller.'
+    } else if (file.size + otherFiles > maxTotalSize) {
+        fileErrors.value[requirementId] = 'Attachments must total no more than 6 MB per submission.'
+    } else {
+        files.value[requirementId] = file
+        delete fileErrors.value[requirementId]
+        return true
+    }
+
+    return false
+}
+
+function upload(event, requirementId) {
+    const file = event.target.files[0]
+    if (file) setFile(requirementId, file)
+    event.target.value = ''
+}
+
+function remove(requirementId) {
+    delete files.value[requirementId]
+    delete fileErrors.value[requirementId]
+}
+
+function startScan(requirementId) {
+    scannedRequirement.value = requirementId
+    delete fileErrors.value[requirementId]
+    scanOpen.value = true
+}
+
+function saveScan([file]) {
+    if (file && setFile(scannedRequirement.value, file)) scanOpen.value = false
+}
+
+function attachmentError(typeIndex, index) {
+    return errors.value[`filings.${typeIndex}.attachments.${index}.file`]
+        ?? errors.value[`filings.${typeIndex}.attachments.${index}.requirement_id`]
+}
+
 async function submit() {
-    if (!selectedType.value) return
-    if (step.value < attachmentsStep.value) {
-        step.value++
-        await nextTick()
-        dialog.value.querySelector('input:not([type="hidden"]), select, textarea, button[type="submit"]')?.focus()
+    if (saving.value || !selectedTypes.value.length) return
+    if (step.value === 1 || (step.value === 2 && franchise.value)) {
+        await goToStep(step.value + 1)
         return
     }
-    if (saving.value) return
-    if (!franchise.value) { errors.value = { franchise_id: 'Select a franchise from the search results.' }; return }
-    if (attachments.value.some(item => item.file.size > 5242880) || attachments.value.reduce((total, item) => total + item.file.size, 0) > 6291456) { errors.value = { attachments: 'Use files up to 5 MB each and 6 MB total.' }; return }
-    saving.value = true
+    if (!franchise.value) return
+
     errors.value = {}
     errorMessage.value = ''
+    const missing = selectedRequirements.value.filter(requirement => !files.value[requirement.id])
+    if (missing.length) {
+        for (const requirement of missing) fileErrors.value[requirement.id] = 'Attach this required document.'
+        return
+    }
+    if (selectedRequirements.value.reduce((total, requirement) => total + files.value[requirement.id].size, 0) > maxTotalSize) {
+        errorMessage.value = 'Attachments must total no more than 6 MB per submission.'
+        return
+    }
+
+    const payload = new FormData()
+    payload.append('franchise_id', franchise.value.id)
+    selectedTypes.value.forEach((type, typeIndex) => {
+        const prefix = `filings[${typeIndex}]`
+        payload.append(`${prefix}[transaction_type]`, type.value)
+        type.requirements.forEach((requirement, index) => {
+            const attachment = `${prefix}[attachments][${index}]`
+            payload.append(`${attachment}[requirement_id]`, requirement.id)
+            payload.append(`${attachment}[file]`, files.value[requirement.id])
+        })
+    })
+
+    saving.value = true
     try {
-        if (workflow.value === 'substitution') details.value.new_vehicle_id = vehicle.value.mode === 'existing' ? vehicle.value.id : null
-        const payload = new FormData()
-        const append = (key, value) => {
-            if (value === null || value === undefined || value === '') return
-            if (value instanceof File) payload.append(key, value)
-            else if (typeof value === 'object') Object.entries(value).forEach(([child, item]) => append(`${key}[${child}]`, item))
-            else payload.append(key, typeof value === 'boolean' ? (value ? '1' : '0') : String(value))
-        }
-        const data = {
-            transaction_type: form.transaction_type,
-            franchise_id: franchise.value.id,
-            attachments: attachments.value,
-            ...(workflow.value === 'general' ? { remarks: form.remarks } : { certificate_issue_date: form.certificate_issue_date, details: details.value }),
-        }
-        if (includesVehicle.value) data.vehicle = vehicle.value
-        Object.entries(data).forEach(([key, value]) => append(key, value))
-        await http.post(route('transactions.store'), payload)
+        const { data } = await http.post(route('transactions.file'), payload)
         open.value = false
-        emit('created')
+        emit('created', data.count)
     } catch (error) {
         if (error.response?.status === 422) {
             errors.value = Object.fromEntries(Object.entries(error.response.data.errors ?? {}).map(([field, messages]) => [field, messages[0]]))
-            if (errors.value.transaction_type) step.value = 1
-            else if (Object.keys(errors.value).some(field => !field.startsWith('attachments') && !field.startsWith('vehicle') && !(isTransfer.value && ['details.previous_vehicle_id', 'details.change_vehicle'].includes(field)))) step.value = 2
-            else if (hasVehicleStep.value && Object.keys(errors.value).some(field => !field.startsWith('attachments'))) step.value = 3
-            errorMessage.value = 'Please check the highlighted fields.'
-        } else errorMessage.value = 'Unable to save the transaction. Refresh the page and try again.'
+            if (errors.value.franchise_id) await goToStep(2)
+            else if (typeErrors.value.length || Object.keys(errors.value).some(field => /^filings\.\d+$/.test(field))) await goToStep(1)
+            errorMessage.value = errors.value.filings ?? 'Check the highlighted fields and try again.'
+        } else if (error.response?.status === 413) {
+            errorMessage.value = 'The upload is too large. Use smaller files and try again.'
+        } else {
+            errorMessage.value = 'Unable to submit the transactions. Please try again.'
+        }
     } finally {
         saving.value = false
     }
 }
-watch(franchise, value => {
-    optionsRequest?.abort()
-    options.value = { owners: [], current_owner_ids: [], vehicles: [] }
-    optionsError.value = ''
-    loading.value = false
-    resetDetails()
-    if (value && open.value) loadOptions()
-})
-onBeforeUnmount(() => optionsRequest?.abort())
 </script>
+
 <template>
     <Teleport to="body">
         <dialog ref="dialog" aria-labelledby="transaction-flow-title" class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-xl bg-white p-6 shadow-xl backdrop:bg-black/50" @cancel.prevent="close" @close="open = false">
             <form class="space-y-4" @submit.prevent="submit">
                 <div class="flex items-center justify-between gap-4">
-                    <div><p class="text-xs text-gray-500">Step {{ step }} of {{ attachmentsStep }}</p><h2 id="transaction-flow-title" class="text-lg font-bold text-[#0D47A1]">{{ title }}</h2></div>
+                    <div>
+                        <p class="text-xs text-gray-500">Step {{ step }} of {{ stepLabels.length }}</p>
+                        <h2 id="transaction-flow-title" class="text-lg font-bold text-[#0D47A1]">Add Transaction</h2>
+                    </div>
                     <button type="button" :disabled="saving" aria-label="Close transaction" class="rounded-lg p-2 hover:bg-blue-50 disabled:opacity-50" @click="close"><X class="h-5 w-5" /></button>
                 </div>
 
                 <p v-if="errorMessage" role="alert" class="text-sm text-red-600">{{ errorMessage }}</p>
-                <p v-if="loading" role="status" class="text-sm text-gray-500">Loading owners and vehicles...</p>
-                <p v-if="optionsError" role="alert" class="text-sm text-red-600">{{ optionsError }} <button type="button" class="underline" @click="loadOptions">Retry</button></p>
-                <fieldset :disabled="saving" class="space-y-4">
+                <fieldset ref="stepPanel" tabindex="-1" :disabled="saving" class="space-y-3">
+                    <legend class="mb-2 text-sm font-semibold text-gray-800">{{ stepLabels[step - 1] }}</legend>
                     <template v-if="step === 1">
-                        <Field v-model="form.transaction_type" name="transaction_type" label="Transaction type" :options="transactionTypes" :errors="errors" required />
+                        <label v-for="type in transactionTypes" :key="type.value" class="flex cursor-pointer items-center gap-3 rounded-lg border border-blue-100 px-3 py-2.5 text-sm hover:bg-blue-50">
+                            <input v-model="selectedCodes" type="checkbox" :value="type.value" class="size-4 accent-[#0D47A1]" />
+                            {{ type.label }}
+                        </label>
                         <p v-if="!transactionTypes.length" class="text-sm text-gray-600">There are no active transaction types available for filing.</p>
+                        <p v-for="(message, index) in typeErrors" :key="index" role="alert" class="text-sm text-red-600">{{ message }}</p>
                     </template>
-                    <template v-else-if="step === 2">
-                        <FranchiseSelect v-model="franchise" :error="errors.franchise_id" />
-                        <p v-if="!franchise" class="text-sm text-gray-500">Search and select a franchise to fill in the details.</p>
-                        <div v-if="franchise" class="space-y-4">
-                            <Field v-if="workflow === 'general'" v-model="form.remarks" name="remarks" label="Remarks (optional)" type="textarea" :errors="errors" />
-                            <template v-else>
-                                <Field v-model="form.certificate_issue_date" name="certificate_issue_date" label="Requested certificate issue date" type="date" :errors="errors" required />
-                                <Renewal v-if="workflow === 'renewal'" v-model="details" :owners="currentOwners" :errors="errors" />
-                                <Amendment v-else-if="workflow === 'amendment'" v-model="details" :owners="owners" :current-owners="currentOwners" :errors="errors" :can-add-owner="canAddOwner && !loading && !optionsError" @add-owner="ownerFormOpen = true" />
-                                <Substitution v-else-if="workflow === 'substitution'" v-model="details" :current-vehicles="currentVehicles" :errors="errors" />
-                                <Application v-else v-model="details" :owners="owners" :errors="errors" />
-                            </template>
-                        </div>
-                    </template>
-                    <template v-else-if="step < attachmentsStep">
-                        <template v-if="isTransfer">
-                            <Field v-model="details.change_vehicle" name="details.change_vehicle" label="Will the vehicle change?" :options="[{ value: '0', label: 'No, keep the current vehicle' }, { value: '1', label: 'Yes, replace the vehicle' }]" :errors="errors" required />
-                            <Field v-if="includesVehicle" v-model="details.previous_vehicle_id" name="details.previous_vehicle_id" label="Vehicle to replace" :options="currentVehicles" :errors="errors" required />
-                            <p v-if="includesVehicle && !currentVehicles.length" class="text-sm text-amber-700">This franchise has no current vehicle to replace.</p>
-                            <div v-if="!includesVehicle" class="rounded-lg bg-blue-50 p-3 text-sm">
-                                <p class="font-medium">Current vehicle</p>
-                                <p v-for="item in currentVehicles" :key="item.value">{{ item.label }}</p>
-                                <p v-if="!currentVehicles.length">No vehicle assigned.</p>
+                    <FranchiseSelect v-else-if="step === 2 && open" v-model="franchise" :error="errors.franchise_id" />
+                    <template v-else-if="step === 3">
+                        <div v-for="(type, typeIndex) in selectedTypes" :key="type.value" class="space-y-3 rounded-lg border border-blue-100 p-4">
+                            <h3 class="text-sm font-semibold text-[#0D47A1]">{{ type.label }}</h3>
+                            <p v-if="!type.requirements.length" class="text-sm text-gray-600">No requirements are configured for this type.</p>
+                            <div v-for="(requirement, index) in type.requirements" :key="requirement.id" class="space-y-2 border-t border-blue-50 pt-3 text-sm">
+                                <p class="font-medium text-gray-800">{{ requirement.name }}</p>
+                                <p v-if="requirement.description" class="whitespace-pre-line text-gray-600">{{ requirement.description }}</p>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <label class="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-blue-200 px-3 py-1.5 text-[#0D47A1] focus-within:ring-2 focus-within:ring-blue-400">
+                                        <Upload aria-hidden="true" class="h-4 w-4" />
+                                        {{ files[requirement.id] ? 'Replace file' : 'Attach file' }}
+                                        <input :aria-label="`Attach ${requirement.name} for ${type.label}`" type="file" accept=".pdf,.jpg,.jpeg,.png" class="sr-only" @change="upload($event, requirement.id)" />
+                                    </label>
+                                    <button type="button" :aria-label="`Scan ${requirement.name} for ${type.label}`" class="inline-flex items-center gap-2 rounded-lg border border-blue-200 px-3 py-1.5 text-[#0D47A1]" @click="startScan(requirement.id)">
+                                        <ScanLine aria-hidden="true" class="h-4 w-4" /> Scan
+                                    </button>
+                                </div>
+                                <div v-if="files[requirement.id]" class="flex items-start justify-between gap-3 text-xs text-gray-600">
+                                    <span class="break-all">{{ files[requirement.id].name }}</span>
+                                    <button type="button" class="text-red-700 underline" :aria-label="`Remove ${requirement.name} for ${type.label}`" @click="remove(requirement.id)">Remove</button>
+                                </div>
+                                <p v-if="fileErrors[requirement.id] || attachmentError(typeIndex, index)" role="alert" class="text-xs text-red-600">
+                                    {{ fileErrors[requirement.id] || attachmentError(typeIndex, index) }}
+                                </p>
                             </div>
-                        </template>
-                        <VehicleForm v-if="includesVehicle" v-model="vehicle" :vehicles="workflow === 'renewal' ? (options.current_vehicles ?? []) : options.vehicles.filter(item => item.id !== details.previous_vehicle_id)" :allow-new="workflow !== 'renewal'" :errors="errors" />
-                    </template>
-                    <template v-else>
-                        <section v-if="transactionRequirements.length" aria-labelledby="transaction-requirements-title" class="space-y-2 rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-slate-700">
-                            <h3 id="transaction-requirements-title" class="font-semibold text-[#0D47A1]">Transaction requirements</h3>
-                            <ul class="list-disc space-y-2 pl-5">
-                                <li v-for="requirement in transactionRequirements" :key="requirement.id" class="break-words">
-                                    <p class="font-medium">{{ requirement.name }}</p>
-                                    <p v-if="requirement.description" class="whitespace-pre-line text-slate-600">{{ requirement.description }}</p>
-                                </li>
-                            </ul>
-                        </section>
-                        <Attachments v-model="attachments" :errors="errors" />
+                            <p v-if="errors[`filings.${typeIndex}.attachments`]" role="alert" class="text-sm text-red-600">{{ errors[`filings.${typeIndex}.attachments`] }}</p>
+                        </div>
+                        <p v-if="selectedRequirements.length" class="text-xs text-gray-500">PDF, JPG, or PNG. Up to 5 MB per file and 6 MB per submission.</p>
+                        <p class="text-xs text-gray-500">Each selected type is filed as a pending transaction. Its documents stay with that transaction for review.</p>
                     </template>
                 </fieldset>
-                <p v-if="step === attachmentsStep" class="text-xs text-gray-500">Submitting saves the complete request as pending.</p>
+
                 <div class="flex justify-end gap-3 border-t border-blue-50 pt-4">
                     <button type="button" :disabled="saving" class="rounded-lg border px-4 py-2 text-sm disabled:opacity-50" @click="close">Cancel</button>
-                    <button v-if="step > 1" type="button" :disabled="saving" class="rounded-lg border px-4 py-2 text-sm disabled:opacity-50" @click="step--">Back</button>
-                    <button type="submit" :disabled="!selectedType || saving || (step > 1 && (loading || !!optionsError || !franchise))" class="rounded-lg bg-[#2196F3] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0D47A1] disabled:opacity-50">{{ saving ? 'Saving...' : step < attachmentsStep ? 'Next' : 'Submit transaction' }}</button>
+                    <button v-if="step > 1" type="button" :disabled="saving" class="rounded-lg border px-4 py-2 text-sm disabled:opacity-50" @click="goToStep(step - 1)">Back</button>
+                    <button type="submit" :disabled="!selectedTypes.length || saving || (step > 1 && !franchise)" class="rounded-lg bg-[#2196F3] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0D47A1] disabled:opacity-50">
+                        {{ saving ? 'Saving...' : step < 3 ? 'Next' : selectedTypes.length > 1 ? 'Submit transactions' : 'Submit transaction' }}
+                    </button>
                 </div>
             </form>
         </dialog>
+        <ScannerCapture v-model:open="scanOpen" :remaining="1" :queue-error="fileErrors[scannedRequirement]" @scanned="saveScan" />
     </Teleport>
-    <OwnerForm v-model:open="ownerFormOpen" @saved="ownerSaved" />
 </template>
