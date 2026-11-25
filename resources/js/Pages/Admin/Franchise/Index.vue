@@ -1,155 +1,155 @@
 <script setup>
-import { computed, inject, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { Head, Link, usePage } from '@inertiajs/vue3'
-import { FileText, Search, ChevronLeft, ChevronRight, Pencil, X, Plus, Eye, ArrowLeftRight, Car, Paperclip } from 'lucide-vue-next'
-import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
-import { formatOwnerName as ownerName } from '@/lib/formatOwnerName'
-import http from '@/lib/http'
-import CreateFranchise from './Create.vue'
-import AssignVehicle from './AssignVehicle.vue'
-import CurrentOwnerDocuments from './CurrentOwnerDocuments.vue'
+    import { computed, inject, onBeforeUnmount, reactive, ref, watch } from 'vue'
+    import { Head, Link, usePage } from '@inertiajs/vue3'
+    import { FileText, Search, ChevronLeft, ChevronRight, Pencil, X, Plus, Eye, ArrowLeftRight, Car, Paperclip } from 'lucide-vue-next'
+    import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
+    import { formatOwnerName as ownerName } from '@/lib/formatOwnerName'
+    import http from '@/lib/http'
+    import CreateFranchise from './Create.vue'
+    import AssignVehicle from './AssignVehicle.vue'
+    import CurrentOwnerDocuments from './CurrentOwnerDocuments.vue'
 
 
-const props = defineProps({
-    franchises: { type: Object, required: true },
-    filters: { type: Object, default: () => ({ search: '', status: '' }) },
-})
-const route = inject('route')
-const franchises = ref(props.franchises)
-const search = ref(props.filters.search ?? '')
-const status = ref(props.filters.status ?? '')
-const loading = ref(false)
-const loadError = ref('')
-let searchTimer
-let listRequest
-
-const statusStyles = {
-    active: 'bg-green-50 text-green-700',
-    expired: 'bg-red-50 text-red-700',
-    suspended: 'bg-amber-50 text-amber-800',
-    unavailable: 'bg-gray-100 text-gray-700',
-}
-const statusLabel = value => value ? value.charAt(0).toUpperCase() + value.slice(1) : 'Unknown'
-
-const formatDate = value => {
-    if (!value) return 'Not set'
-    const date = new Date(`${value.slice(0, 10)}T00:00:00`)
-    return Number.isNaN(date.getTime()) ? 'Not set' : date.toLocaleDateString()
-}
-
-async function loadFranchises(page = 1) {
-    clearTimeout(searchTimer)
-    listRequest?.abort()
-    const request = new AbortController()
-    listRequest = request
-    loading.value = true
-    loadError.value = ''
-    try {
-        const { data } = await http.get(route('franchise.index'), {
-            params: { search: search.value, status: status.value, page },
-            signal: request.signal,
-        })
-        if (request.signal.aborted) return
-        if (page > data.franchises.last_page) {
-            await loadFranchises(data.franchises.last_page)
-            return
-        }
-        franchises.value = data.franchises
-    } catch (error) {
-        if (request.signal.aborted) return
-        loadError.value = error.response?.status === 403
-            ? 'You do not have permission to view franchises.'
-            : error.response?.status === 401
-                ? 'Your session ended. Sign in again.'
-                : 'Unable to load franchises. Please try again.'
-    } finally {
-        if (listRequest === request) loading.value = false
-    }
-}
-watch(search, () => {
-    clearTimeout(searchTimer)
-    listRequest?.abort()
-    searchTimer = setTimeout(() => loadFranchises(), 300)
-})
-watch(status, () => loadFranchises())
-watch(() => props.franchises, value => { franchises.value = value })
-watch(() => props.filters, value => {
-    search.value = value.search ?? ''
-    status.value = value.status ?? ''
-})
-onBeforeUnmount(() => { clearTimeout(searchTimer); listRequest?.abort() })
-const assignVehicleOpen = ref(false)
-const vehicleFranchise = ref(null)
-function openVehicleAssignment(franchise) { vehicleFranchise.value = franchise; assignVehicleOpen.value = true }
-function vehicleAssigned() {
-    notice.value = 'Vehicle assigned.'
-    loadFranchises(franchises.value.current_page)
-}
-
-const createOpen = ref(false)
-function franchiseCreated() {
-    notice.value = 'Franchise created.'
-    loadFranchises()
-}
-const editDialog = ref(null)
-const selected = ref(null)
-const saving = ref(false)
-const errors = ref({})
-const saveError = ref('')
-const notice = ref('')
-const editForm = reactive({ franchise_number: '', status: 'active', date_issued: '', expiration_date: '' })
-function openEdit(franchise) {
-    selected.value = franchise
-    Object.assign(editForm, {
-        franchise_number: franchise.franchise_number,
-        status: franchise.recorded_status ?? franchise.status,
-        date_issued: franchise.date_issued?.slice(0, 10) ?? '',
-        expiration_date: franchise.expiration_date?.slice(0, 10) ?? '',
+    const props = defineProps({
+        franchises: { type: Object, required: true },
+        filters: { type: Object, default: () => ({ search: '', status: '' }) },
     })
-    errors.value = {}
-    saveError.value = ''
-    editDialog.value.showModal()
-}
-function closeEdit() {
-    if (!saving.value) editDialog.value.close()
-}
-async function saveEdit() {
-    if (saving.value) return
-    saving.value = true
-    errors.value = {}
-    saveError.value = ''
-    try {
-        await http.post(route('franchise.update', selected.value.id), {
-            ...editForm,
-            franchise_number: editForm.franchise_number.trim(),
-            date_issued: editForm.date_issued || null,
-            expiration_date: editForm.expiration_date || null,
-        })
-        editDialog.value.close()
-        notice.value = 'Franchise updated.'
-        await loadFranchises(franchises.value.current_page)
-    } catch (error) {
-        if (error.response?.status === 422) {
-            errors.value = Object.fromEntries(Object.entries(error.response.data.errors ?? {}).map(([field, messages]) => [field, messages[0]]))
-        } else {
-            saveError.value = error.response?.status === 403 ? 'You do not have permission to edit franchises.' : 'Unable to save. Refresh the page and try again.'
-        }
-    } finally {
-        saving.value = false
+    const route = inject('route')
+    const franchises = ref(props.franchises)
+    const search = ref(props.filters.search ?? '')
+    const status = ref(props.filters.status ?? '')
+    const loading = ref(false)
+    const loadError = ref('')
+    let searchTimer
+    let listRequest
+
+    const statusStyles = {
+        active: 'bg-green-50 text-green-700',
+        expired: 'bg-red-50 text-red-700',
+        suspended: 'bg-amber-50 text-amber-800',
+        unavailable: 'bg-gray-100 text-gray-700',
     }
-}
-const viewDialog = ref(null)
-const viewed = ref(null)
-const page = usePage()
-const canViewOwnerships = computed(() => page.props.auth?.isSuperAdmin || page.props.auth?.permissions?.includes('view ownerships'))
-function openView(franchise) {
-    viewed.value = franchise
-    viewDialog.value.showModal()
-}
-function closeView() {
-    viewDialog.value.close()
-    viewed.value = null
-}
+    const statusLabel = value => value ? value.charAt(0).toUpperCase() + value.slice(1) : 'Unknown'
+
+    const formatDate = value => {
+        if (!value) return 'Not set'
+        const date = new Date(`${value.slice(0, 10)}T00:00:00`)
+        return Number.isNaN(date.getTime()) ? 'Not set' : date.toLocaleDateString()
+    }
+
+    async function loadFranchises(page = 1) {
+        clearTimeout(searchTimer)
+        listRequest?.abort()
+        const request = new AbortController()
+        listRequest = request
+        loading.value = true
+        loadError.value = ''
+        try {
+            const { data } = await http.get(route('franchise.index'), {
+                params: { search: search.value, status: status.value, page },
+                signal: request.signal,
+            })
+            if (request.signal.aborted) return
+            if (page > data.franchises.last_page) {
+                await loadFranchises(data.franchises.last_page)
+                return
+            }
+            franchises.value = data.franchises
+        } catch (error) {
+            if (request.signal.aborted) return
+            loadError.value = error.response?.status === 403
+                ? 'You do not have permission to view franchises.'
+                : error.response?.status === 401
+                    ? 'Your session ended. Sign in again.'
+                    : 'Unable to load franchises. Please try again.'
+        } finally {
+            if (listRequest === request) loading.value = false
+        }
+    }
+    watch(search, () => {
+        clearTimeout(searchTimer)
+        listRequest?.abort()
+        searchTimer = setTimeout(() => loadFranchises(), 300)
+    })
+    watch(status, () => loadFranchises())
+    watch(() => props.franchises, value => { franchises.value = value })
+    watch(() => props.filters, value => {
+        search.value = value.search ?? ''
+        status.value = value.status ?? ''
+    })
+    onBeforeUnmount(() => { clearTimeout(searchTimer); listRequest?.abort() })
+    const assignVehicleOpen = ref(false)
+    const vehicleFranchise = ref(null)
+    function openVehicleAssignment(franchise) { vehicleFranchise.value = franchise; assignVehicleOpen.value = true }
+    function vehicleAssigned() {
+        notice.value = 'Vehicle assigned.'
+        loadFranchises(franchises.value.current_page)
+    }
+
+    const createOpen = ref(false)
+    function franchiseCreated() {
+        notice.value = 'Franchise created.'
+        loadFranchises()
+    }
+    const editDialog = ref(null)
+    const selected = ref(null)
+    const saving = ref(false)
+    const errors = ref({})
+    const saveError = ref('')
+    const notice = ref('')
+    const editForm = reactive({ franchise_number: '', status: 'active', date_issued: '', expiration_date: '' })
+    function openEdit(franchise) {
+        selected.value = franchise
+        Object.assign(editForm, {
+            franchise_number: franchise.franchise_number,
+            status: franchise.recorded_status ?? franchise.status,
+            date_issued: franchise.date_issued?.slice(0, 10) ?? '',
+            expiration_date: franchise.expiration_date?.slice(0, 10) ?? '',
+        })
+        errors.value = {}
+        saveError.value = ''
+        editDialog.value.showModal()
+    }
+    function closeEdit() {
+        if (!saving.value) editDialog.value.close()
+    }
+    async function saveEdit() {
+        if (saving.value) return
+        saving.value = true
+        errors.value = {}
+        saveError.value = ''
+        try {
+            await http.post(route('franchise.update', selected.value.id), {
+                ...editForm,
+                franchise_number: editForm.franchise_number.trim(),
+                date_issued: editForm.date_issued || null,
+                expiration_date: editForm.expiration_date || null,
+            })
+            editDialog.value.close()
+            notice.value = 'Franchise updated.'
+            await loadFranchises(franchises.value.current_page)
+        } catch (error) {
+            if (error.response?.status === 422) {
+                errors.value = Object.fromEntries(Object.entries(error.response.data.errors ?? {}).map(([field, messages]) => [field, messages[0]]))
+            } else {
+                saveError.value = error.response?.status === 403 ? 'You do not have permission to edit franchises.' : 'Unable to save. Refresh the page and try again.'
+            }
+        } finally {
+            saving.value = false
+        }
+    }
+    const viewDialog = ref(null)
+    const viewed = ref(null)
+    const page = usePage()
+    const canViewOwnerships = computed(() => page.props.auth?.isSuperAdmin || page.props.auth?.permissions?.includes('view ownerships'))
+    function openView(franchise) {
+        viewed.value = franchise
+        viewDialog.value.showModal()
+    }
+    function closeView() {
+        viewDialog.value.close()
+        viewed.value = null
+    }
 </script>
 
 <template>
@@ -212,8 +212,8 @@ function closeView() {
                                 <td class="px-5 py-4">
                                     <div class="flex items-center justify-center gap-2">
                                         <button type="button" title="View franchise" :aria-label="`View ${franchise.franchise_number}`" class="rounded-lg bg-slate-100 p-2 text-slate-700 hover:bg-slate-200" @click="openView(franchise)"><Eye aria-hidden="true" class="h-4 w-4" /></button>
-                                        <button type="button" title="Edit franchise" :aria-label="`Edit ${franchise.franchise_number}`" class="rounded-lg bg-[#E3F2FD] p-2 text-[#0D47A1] hover:bg-[#90CAF9]" @click="openEdit(franchise)"><Pencil aria-hidden="true" class="h-4 w-4" /></button>
-                                        <button type="button" title="Assign vehicle" :aria-label="`Assign vehicle to ${franchise.franchise_number}`" class="rounded-lg bg-teal-50 p-2 text-teal-700 hover:bg-teal-100" @click="openVehicleAssignment(franchise)"><Car aria-hidden="true" class="h-4 w-4" /></button>
+                                        <!-- <button type="button" title="Edit franchise" :aria-label="`Edit ${franchise.franchise_number}`" class="rounded-lg bg-[#E3F2FD] p-2 text-[#0D47A1] hover:bg-[#90CAF9]" @click="openEdit(franchise)"><Pencil aria-hidden="true" class="h-4 w-4" /></button>
+                                        <button type="button" title="Assign vehicle" :aria-label="`Assign vehicle to ${franchise.franchise_number}`" class="rounded-lg bg-teal-50 p-2 text-teal-700 hover:bg-teal-100" @click="openVehicleAssignment(franchise)"><Car aria-hidden="true" class="h-4 w-4" /></button> -->
                                         <Link :href="route('transactions.index', { create: 1, franchise: franchise.id })" title="Add transaction" :aria-label="`Add transaction for ${franchise.franchise_number}`" class="rounded-lg bg-violet-50 p-2 text-violet-700 hover:bg-violet-100" ><ArrowLeftRight aria-hidden="true" class="h-4 w-4" /></Link>
                                     </div>
                                 </td>

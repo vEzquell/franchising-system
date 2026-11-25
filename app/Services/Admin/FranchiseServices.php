@@ -11,16 +11,12 @@ class FranchiseServices
 {
     public function paginate(string $search = '', string $status = ''): LengthAwarePaginator
     {
-        $currentOwnership = fn (Builder $query) => $query
-            ->whereDate('started_at', '<=', today())
-            ->where(fn (Builder $period) => $period->whereNull('ended_at')->orWhereDate('ended_at', '>', today()));
-
         return Franchise::query()
-            ->when($search !== '', function (Builder $query) use ($search, $currentOwnership) {
-                $query->where(function (Builder $query) use ($search, $currentOwnership) {
+            ->when($search !== '', function (Builder $query) use ($search) {
+                $query->where(function (Builder $query) use ($search) {
                     $query->where('franchise_number', 'like', '%'.$search.'%')
-                        ->orWhereHas('ownerships', function (Builder $ownership) use ($search, $currentOwnership) {
-                            $currentOwnership($ownership)->whereHas('owner', function (Builder $owner) use ($search) {
+                        ->orWhereHas('ownerships', function (Builder $ownership) use ($search) {
+                            $ownership->current()->whereHas('owner', function (Builder $owner) use ($search) {
                                 $owner->where('first_name', 'like', '%'.$search.'%')
                                     ->orWhere('last_name', 'like', '%'.$search.'%')
                                     ->orWhere('middle_name', 'like', '%'.$search.'%')
@@ -31,7 +27,7 @@ class FranchiseServices
             })
             ->when($status !== '', fn (Builder $query) => $query->whereEffectiveStatus($status))
             ->with('liner:id,name,route')
-            ->with(['ownerships' => fn (HasMany $query) => $currentOwnership($query->getQuery())
+            ->with(['ownerships' => fn (HasMany $query) => $query->current()
                 ->with('owner:id,first_name,middle_name,last_name,suffix')->orderByDesc('started_at')->orderByDesc('id')])
             ->with(['vehicleAssignments' => fn (HasMany $query) => $query->current()->with('vehicle')])
             ->withCount('transactions')

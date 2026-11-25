@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Attributes\Scope;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -21,6 +23,15 @@ class FranchiseOwnership extends Model
             'started_at' => 'date',
             'ended_at' => 'date',
         ];
+    }
+
+    #[Scope]
+    protected function current(Builder $query): Builder
+    {
+        $date = today();
+
+        return $query->whereDate('started_at', '<=', $date)
+            ->where(fn (Builder $period) => $period->whereNull('ended_at')->orWhereDate('ended_at', '>', $date));
     }
 
     public function franchise(): BelongsTo

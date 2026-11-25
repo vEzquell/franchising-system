@@ -13,6 +13,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class FranchiseTransactionService
@@ -90,6 +91,7 @@ class FranchiseTransactionService
                 $types = TransactionType::query()->active()->whereIn('code', array_column($filings, 'transaction_type'))
                     ->orderBy('code')->sharedLock()->get(['code'])->keyBy('code');
                 $franchise = Franchise::query()->lockForUpdate()->findOrFail($franchiseId);
+                $filingGroupId = Str::uuid()->toString();
 
                 foreach ($filings as $index => $filing) {
                     $code = $filing['transaction_type'];
@@ -99,6 +101,7 @@ class FranchiseTransactionService
 
                     $uploads = $this->requirementUploads($code, $filing['attachments'] ?? [], $index);
                     $transaction = $franchise->transactions()->create([
+                        'filing_group_id' => $filingGroupId,
                         'transaction_type' => $code,
                         'date_filed' => today()->toDateString(),
                         'status' => 'pending',

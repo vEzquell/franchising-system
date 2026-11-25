@@ -6,6 +6,7 @@ use App\Models\FranchiseTransaction;
 use App\Models\User;
 use App\Models\Vehicle;
 use Illuminate\Database\QueryException;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
@@ -84,6 +85,27 @@ test('transaction details and amendment fields cannot be duplicated', function (
     expect(fn () => $transaction->amendment()->create(['amendment_type' => 'change_details']))->toThrow(QueryException::class);
     $amendment->changes()->create(['field_name' => 'franchise_number']);
     expect(fn () => $amendment->changes()->create(['field_name' => 'franchise_number']))->toThrow(QueryException::class);
+});
+
+test('the transaction creator migration can resume with an existing column', function () {
+    Schema::table('franchise_transactions', function (Blueprint $table): void {
+        $table->dropForeign(['created_by']);
+    });
+    $creator = User::create(['name' => 'Creator', 'username' => 'creator', 'password' => 'password']);
+    $franchise = Franchise::create(['franchise_number' => 'F-CREATOR']);
+    $transaction = $franchise->transactions()->create([
+        'transaction_type' => 'application',
+        'date_filed' => '2026-11-17',
+        'created_by' => $creator->id,
+    ]);
+    $migration = require database_path('migrations/2026_11_20_003637_add_created_by_to_franchise_transactions_table.php');
+
+    $migration->up();
+    $migration->up();
+
+    expect($transaction->fresh()->created_by)->toBe($creator->id);
+    $creator->delete();
+    expect($transaction->fresh()->created_by)->toBeNull();
 });
 
 test('franchise migrations can roll back in reverse dependency order and run again', function () {

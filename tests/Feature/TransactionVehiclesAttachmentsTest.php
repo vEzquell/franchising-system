@@ -70,23 +70,45 @@ test('initial vehicle assignment is dated and prevents overlapping assignments',
     $this->assertDatabaseCount('franchise_vehicle_assignments', 1);
 });
 
-test('new vehicles can share a plate only when their make or type differs', function () {
-    Vehicle::create(['make_type' => 'Motorcycle', 'plate_number' => 'SHARED-001']);
-    $vehicle = ['mode' => 'new', 'make_type' => 'Tricycle', 'plate_number' => 'SHARED-001'];
-    $data = ['vehicle' => $vehicle, 'started_at' => today()->toDateString()];
+test('new vehicles can share identifiers when any vehicle detail differs', function (array $changedDetails) {
+    $original = ['make_type' => 'Motorcycle', 'plate_number' => 'SHARED-001', 'motor_number' => 'M-001', 'chassis_number' => 'C-001'];
+    Vehicle::create($original);
+    $details = array_replace($original, $changedDetails);
 
-    $this->postJson(route('franchise.vehicles.store', $this->franchise), $data)->assertCreated();
-    $this->assertDatabaseHas('vehicles', ['make_type' => 'Tricycle', 'plate_number' => 'SHARED-001']);
+    $this->postJson(route('franchise.vehicles.store', $this->franchise), [
+        'vehicle' => ['mode' => 'new', ...$details],
+        'started_at' => today()->toDateString(),
+    ])->assertCreated();
 
-    $other = Franchise::create(['franchise_number' => 'F-SHARED-PLATE']);
-    $this->postJson(route('franchise.vehicles.store', $other), $data)
+    $this->assertDatabaseHas('vehicles', $details);
+})->with([
+    'different make or type' => [['make_type' => 'Tricycle']],
+    'different plate' => [['plate_number' => 'SHARED-002']],
+    'different motor' => [['motor_number' => 'M-002']],
+    'different chassis' => [['chassis_number' => 'C-002']],
+    'both identifiers changed' => [['motor_number' => 'M-002', 'chassis_number' => 'C-002']],
+]);
+
+test('identical vehicle details are rejected even when optional numbers are missing', function (array $identifiers) {
+    $details = ['make_type' => 'Motorcycle', ...$identifiers];
+    Vehicle::create($details);
+
+    $this->postJson(route('franchise.vehicles.store', $this->franchise), [
+        'vehicle' => ['mode' => 'new', ...$details],
+        'started_at' => today()->toDateString(),
+    ])
         ->assertUnprocessable()
-        ->assertJsonValidationErrors(['vehicle.plate_number' => 'A vehicle with this make/type and plate number already exists.']);
+        ->assertJsonValidationErrors(['vehicle.plate_number' => 'A vehicle with these same details already exists.']);
 
-    $this->assertDatabaseCount('vehicles', 2);
-    expect(fn () => Vehicle::create(['make_type' => 'Tricycle', 'plate_number' => 'SHARED-001']))
+    $this->assertDatabaseCount('vehicles', 1);
+    $this->assertDatabaseCount('franchise_vehicle_assignments', 0);
+    expect(fn () => Vehicle::create($details))
         ->toThrow(UniqueConstraintViolationException::class);
-});
+})->with([
+    'all identifiers' => [['plate_number' => 'SHARED-001', 'motor_number' => 'M-001', 'chassis_number' => 'C-001']],
+    'plate only' => [['plate_number' => 'SHARED-001']],
+    'chassis only' => [['chassis_number' => 'C-001']],
+]);
 
 test('vehicle assignment options return details for the current link only', function () {
     $vehicle = Vehicle::create(['make_type' => 'Motorcycle', 'plate_number' => 'CUR-001', 'motor_number' => 'M-001', 'chassis_number' => 'C-001']);

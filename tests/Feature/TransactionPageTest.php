@@ -2,7 +2,9 @@
 
 use App\Models\Franchise;
 use App\Models\FranchiseOwner;
+use App\Models\FranchiseTransaction;
 use App\Models\Requirement;
+use App\Models\TransactionType;
 use App\Models\User;
 use App\Models\Vehicle;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -177,8 +179,42 @@ test('a filing is rejected atomically when a required document is missing or bel
     expect(Storage::disk('local')->allFiles())->toBe([]);
 });
 
+test('the PA purpose includes only the types from the selected filing', function () {
+    $franchise = Franchise::create(['franchise_number' => 'F-PA-PURPOSE']);
+    $legacy = $franchise->transactions()->create(['transaction_type' => 'application', 'date_filed' => today()]);
+    $sticker = TransactionType::factory()->create(['name' => 'Sticker']);
+    $this->staff->givePermissionTo(Permission::create(['name' => 'view franchise', 'guard_name' => 'web']));
+
+    $this->actingAs($this->staff)->postJson(route('transactions.file'), [
+        'franchise_id' => $franchise->id,
+        'filings' => [['transaction_type' => $sticker->code], ['transaction_type' => 'renewal']],
+    ])->assertCreated();
+    $this->postJson(route('transactions.file'), [
+        'franchise_id' => $franchise->id,
+        'filings' => [['transaction_type' => 'amendment']],
+    ])->assertCreated();
+
+    $filed = $franchise->transactions()->get()->keyBy('transaction_type');
+    expect($filed[$sticker->code]->filing_group_id)->not->toBeNull()
+        ->toBe($filed['renewal']->filing_group_id)
+        ->not->toBe($filed['amendment']->filing_group_id);
+
+    $readPage = function (FranchiseTransaction $transaction): string {
+        $response = $this->get(route('transactions.pa', $transaction))->assertOk()->assertHeader('Content-Type', 'application/pdf');
+        $pdf = $response->getContent();
+        expect(preg_match('/<<\/Filter \/FlateDecode \/Length (\d+)>>\nstream\n/', $pdf, $stream, PREG_OFFSET_CAPTURE))->toBe(1);
+
+        return gzuncompress(substr($pdf, $stream[0][1] + strlen($stream[0][0]), (int) $stream[1][0]));
+    };
+
+    expect($readPage($filed['renewal']))->toContain('(STICKER AND RENEWAL)')
+        ->not->toContain('(AMENDMENT)', '(APPLICATION)');
+    expect($readPage($legacy))->toContain('(APPLICATION)')->not->toContain('(STICKER AND RENEWAL)');
+});
+
 test('all standalone transaction endpoints require transaction page permission', function () {
     $franchise = Franchise::create(['franchise_number' => 'SC-0001']);
+    $transaction = $franchise->transactions()->create(['transaction_type' => 'application', 'date_filed' => today()]);
     $this->get(route('transactions.index'))->assertRedirect(route('login'));
     $this->staff->revokePermissionTo('view transactions');
     $this->staff->givePermissionTo(Permission::create(['name' => 'view franchise', 'guard_name' => 'web']));
@@ -187,4 +223,5 @@ test('all standalone transaction endpoints require transaction page permission',
     $this->getJson(route('transactions.options', $franchise))->assertForbidden();
     $this->postJson(route('transactions.store'), [])->assertForbidden();
     $this->postJson(route('transactions.file'), [])->assertForbidden();
+    $this->get(route('transactions.pa', $transaction))->assertForbidden();
 });

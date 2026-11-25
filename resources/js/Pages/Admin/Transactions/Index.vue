@@ -1,6 +1,6 @@
 <script setup>
-import { inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Head } from '@inertiajs/vue3'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Head, usePage } from '@inertiajs/vue3'
 import { FileText, Search, Plus, Eye, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import CreateTransaction from './Create.vue'
@@ -8,6 +8,8 @@ import ShowTransaction from './Show.vue'
 import http from '@/lib/http'
 const props = defineProps({ transactions: { type: Object, required: true }, transactionTypes: { type: Array, required: true }, filters: { type: Object, default: () => ({ search: '', status: '' }) } })
 const route = inject('route')
+const page = usePage()
+const canViewFranchise = computed(() => page.props.auth?.isSuperAdmin || page.props.auth?.permissions?.includes('view franchise'))
 const transactions = ref(props.transactions)
 const transactionTypes = ref(props.transactionTypes)
 const search = ref(props.filters.search ?? '')
@@ -92,7 +94,14 @@ onBeforeUnmount(() => { clearTimeout(searchTimer); request?.abort(); shortcutReq
                     <table class="w-full min-w-[1000px] text-left text-sm">
                         <thead class="bg-[#E3F2FD] text-[#0D47A1]"><tr><th scope="col" class="px-5 py-4">#</th><th scope="col" class="px-5 py-4">Franchise number</th><th scope="col" class="px-5 py-4">Type</th><th scope="col" class="px-5 py-4">Status</th><th scope="col" class="px-5 py-4">Created</th><th scope="col" class="px-5 py-4">Created by</th><th scope="col" class="px-5 py-4">Approved by</th><th scope="col" class="px-5 py-4">Actions</th></tr></thead>
                         <tbody class="divide-y divide-[#E3F2FD]">
-                            <tr v-for="(transaction, index) in transactions.data" :key="transaction.id" class="hover:bg-blue-50/50"><td class="px-5 py-4 text-gray-500">{{ transactions.from + index }}</td><td class="px-5 py-4 font-semibold text-gray-800">{{ transaction.franchise?.franchise_number || 'Not assigned' }}</td><td class="px-5 py-4">{{ transaction.type?.name ?? label(transaction.transaction_type) }}</td><td class="px-5 py-4"><span class="rounded-full px-3 py-1 text-xs font-semibold" :class="transaction.status === 'approved' ? 'bg-green-50 text-green-700' : transaction.status === 'rejected' ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-800'">{{ label(transaction.status) }}</span></td><td class="px-5 py-4 text-gray-500">{{ formatTime(transaction.created_at) }}</td><td class="px-5 py-4">{{ transaction.creator?.name ?? 'Unknown' }}</td><td class="px-5 py-4">{{ transaction.status === 'approved' ? (transaction.approver?.name ?? 'Unknown') : '—' }}</td><td class="px-5 py-4"><button type="button" title="View transaction and attachments" :aria-label="`View transaction ${transaction.id}`" class="rounded-lg bg-blue-50 p-2 text-[#0D47A1]" @click="show(transaction)"><Eye class="h-4 w-4" /></button></td></tr>
+                            <tr v-for="(transaction, index) in transactions.data" :key="transaction.id" class="hover:bg-blue-50/50"><td class="px-5 py-4 text-gray-500">{{ transactions.from + index }}</td><td class="px-5 py-4 font-semibold text-gray-800">{{ transaction.franchise?.franchise_number || 'Not assigned' }}</td><td class="px-5 py-4">{{ transaction.type?.name ?? label(transaction.transaction_type) }}</td><td class="px-5 py-4"><span class="rounded-full px-3 py-1 text-xs font-semibold" :class="transaction.status === 'approved' ? 'bg-green-50 text-green-700' : transaction.status === 'rejected' ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-800'">{{ label(transaction.status) }}</span></td><td class="px-5 py-4 text-gray-500">{{ formatTime(transaction.created_at) }}</td><td class="px-5 py-4">{{ transaction.creator?.name ?? 'Unknown' }}</td><td class="px-5 py-4">{{ transaction.status === 'approved' ? (transaction.approver?.name ?? 'Unknown') : '—' }}</td>
+                                <td class="px-5 py-4">
+                                    <div class="flex items-center gap-2">
+                                        <button type="button" title="View transaction and attachments" :aria-label="`View transaction ${transaction.id}`" class="rounded-lg bg-blue-50 p-2 text-[#0D47A1]" @click="show(transaction)"><Eye class="h-4 w-4" /></button>
+                                        <a v-if="canViewFranchise && transaction.franchise" :href="route('transactions.pa', { transaction: transaction.id })" target="_blank" rel="noopener" title="Open PA PDF in a new tab" :aria-label="`Open PA PDF for transaction ${transaction.id} in a new tab`" class="rounded-lg bg-blue-50 p-2 text-xs font-semibold leading-4 text-blue-700 hover:bg-blue-100">PA</a>
+                                    </div>
+                                </td>
+                            </tr>
                             <tr v-if="!transactions.data.length"><td colspan="8" class="px-5 py-16 text-center"><FileText class="mx-auto mb-3 h-10 w-10 text-[#2196F3]" /><p class="font-medium text-gray-700">No transactions found</p><p class="mt-1 text-gray-500">{{ search || status ? 'Try another search or filter.' : 'Start with New Transaction.' }}</p></td></tr>
                         </tbody>
                     </table>

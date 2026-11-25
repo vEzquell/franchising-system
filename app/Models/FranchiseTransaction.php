@@ -11,6 +11,7 @@ class FranchiseTransaction extends Model
 {
     protected $fillable = [
         'franchise_id',
+        'filing_group_id',
         'transaction_type',
         'status',
         'date_filed',

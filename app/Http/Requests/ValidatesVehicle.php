@@ -2,7 +2,6 @@
 
 namespace App\Http\Requests;
 
-use Illuminate\Database\Query\Builder;
 use Illuminate\Validation\Rule;
 
 trait ValidatesVehicle
@@ -10,7 +9,6 @@ trait ValidatesVehicle
     public function vehicleRules(): array
     {
         $new = $this->input('vehicle.mode') === 'new';
-        $makeType = $this->input('vehicle.make_type');
 
         return [
             'vehicle' => ['sometimes', 'array'],
@@ -20,18 +18,9 @@ trait ValidatesVehicle
             'vehicle.plate_number' => [
                 ...($new ? ['required_without_all:vehicle.motor_number,vehicle.chassis_number'] : []),
                 'nullable', 'string', 'max:20',
-                ...($new && is_string($makeType) ? [
-                    Rule::unique('vehicles', 'plate_number')->where(fn (Builder $query): Builder => $query->where('make_type', $makeType)),
-                ] : []),
             ],
-            'vehicle.motor_number' => ['nullable', 'string', 'max:100', ...($new ? [Rule::unique('vehicles', 'motor_number')] : [])],
-            'vehicle.chassis_number' => ['nullable', 'string', 'max:100', ...($new ? [Rule::unique('vehicles', 'chassis_number')] : [])],
+            'vehicle.motor_number' => ['nullable', 'string', 'max:100'],
+            'vehicle.chassis_number' => ['nullable', 'string', 'max:100'],
         ];
-    }
-
-    /** @return array<string, string> */
-    public function messages(): array
-    {
-        return ['vehicle.plate_number.unique' => 'A vehicle with this make/type and plate number already exists.'];
     }
 }

@@ -4,6 +4,7 @@ use App\Models\Franchise;
 use App\Models\FranchiseOwner;
 use App\Models\Liner;
 use App\Models\User;
+use App\Models\Vehicle;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Inertia\Testing\AssertableInertia as Assert;
 use Spatie\Permission\Models\Permission;
@@ -22,6 +23,41 @@ test('franchise listing requires authentication and page permission', function (
     $this->actingAs($other)->getJson(route('franchise.index'))->assertForbidden();
     $other->assignRole(Role::create(['name' => 'superadmin', 'guard_name' => 'web']));
     $this->getJson(route('franchise.index'))->assertOk();
+});
+
+test('the PA PDF prints the selected franchise and its current owner and vehicle', function () {
+    $this->travelTo(now('UTC')->setDate(2026, 11, 22)->setTime(16, 15));
+    Franchise::create(['franchise_number' => 'PA-OTHER']);
+    $franchise = Franchise::create(['franchise_number' => 'Pa-Selected', 'date_issued' => '2026-05-13']);
+    $franchise->liner()->associate(Liner::create(['name' => 'North Liner', 'route' => 'Market to Pier']))->save();
+    $owner = FranchiseOwner::create(['first_name' => 'Ana', 'middle_name' => 'M.', 'last_name' => 'Peña', 'address' => '12 Pier Road']);
+    $previousOwner = FranchiseOwner::create(['first_name' => 'Previous', 'last_name' => 'Owner']);
+    $franchise->ownerships()->create(['franchise_owner_id' => $previousOwner->id, 'started_at' => '2026-01-01', 'ended_at' => '2026-05-13']);
+    $franchise->ownerships()->create(['franchise_owner_id' => $owner->id, 'started_at' => '2026-05-13']);
+    $vehicle = Vehicle::create(['make_type' => 'Honda TMX', 'plate_number' => 'Pa-Plate', 'motor_number' => 'Pa-Engine', 'chassis_number' => 'Pa-Chassis']);
+    $previousVehicle = Vehicle::create(['make_type' => 'Other Make', 'plate_number' => 'PA-PREVIOUS']);
+    $franchise->vehicleAssignments()->create(['vehicle_id' => $previousVehicle->id, 'started_at' => '2026-01-01', 'ended_at' => '2026-05-13']);
+    $franchise->vehicleAssignments()->create(['vehicle_id' => $vehicle->id, 'started_at' => '2026-05-13']);
+
+    $response = $this->actingAs($this->viewer)->get(route('pa', $franchise));
+
+    $response->assertOk()->assertHeader('Content-Type', 'application/pdf');
+    $pdf = $response->getContent();
+    expect(preg_match('/<<\/Filter \/FlateDecode \/Length (\d+)>>\nstream\n/', $pdf, $stream, PREG_OFFSET_CAPTURE))->toBe(1);
+    $page = gzuncompress(substr($pdf, $stream[0][1] + strlen($stream[0][0]), (int) $stream[1][0]));
+    expect($page)->toContain('(PA-SELECTED)', '(11/23/2026)', "(ANA M. PE\xD1A)", '(12 PIER ROAD)', '(NORTH LINER)', '(HONDA TMX)', '(PA-PLATE)', '(PA-ENGINE)', '(PA-CHASSIS)')
+        ->not->toContain('05/13/2026', 'PA-OTHER', 'PREVIOUS OWNER', 'PA-PREVIOUS', 'MARKET TO PIER', 'TRANSFER AND EXTENSION OF MTOP');
+});
+
+test('the PA PDF requires franchise permission and can open an incomplete franchise', function () {
+    $franchise = Franchise::create(['franchise_number' => 'PA-INCOMPLETE']);
+    $url = route('pa', $franchise);
+    $other = User::create(['name' => 'Other', 'username' => 'pa-other', 'password' => 'password']);
+
+    $this->get($url)->assertRedirect(route('login'));
+    $this->actingAs($other)->get($url)->assertForbidden();
+    $this->actingAs($this->viewer)->get($url)->assertOk()->assertHeader('Content-Type', 'application/pdf');
+    $this->get(route('pa', $franchise->id + 1))->assertNotFound();
 });
 
 test('franchise listing renders the index and paginates stable results', function () {

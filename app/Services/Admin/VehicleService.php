@@ -6,6 +6,7 @@ use App\Models\Franchise;
 use App\Models\FranchiseSubstitution;
 use App\Models\FranchiseVehicleAssignment;
 use App\Models\Vehicle;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -39,7 +40,17 @@ class VehicleService
             return Vehicle::findOrFail($data['id']);
         }
 
-        return Vehicle::create(Arr::only($data, ['make_type', 'plate_number', 'motor_number', 'chassis_number']));
+        try {
+            return Vehicle::create(Arr::only($data, ['make_type', 'plate_number', 'motor_number', 'chassis_number']));
+        } catch (UniqueConstraintViolationException $exception) {
+            if (! str_contains($exception->getPrevious()->getMessage(), 'vehicles_details_unique')) {
+                throw $exception;
+            }
+
+            throw ValidationException::withMessages([
+                'vehicle.plate_number' => 'A vehicle with these same details already exists.',
+            ]);
+        }
     }
 
     public function assign(Franchise $franchise, array $data): FranchiseVehicleAssignment
